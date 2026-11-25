@@ -2,7 +2,7 @@
  * The simulation. Owns all game state and advances it one fixed tick at a time
  * from player commands. No rendering, DOM or network code belongs here.
  */
-import { add, clone, copy, normalize, scale, vec3, type Vec3 } from "../math/vec3";
+import { add, addScaled, clone, copy, dot, normalize, scale, vec3, type Vec3 } from "../math/vec3";
 import type { CollisionBrush, LevelData, SpawnPoint } from "../level/types";
 import { CollisionWorld, type Tracer } from "./collision";
 import { emptyCommand, type PlayerCommand } from "./command";
@@ -12,6 +12,7 @@ import { applyPickup, createPickups, PICKUP_HALF_SIZE, type PickupState } from "
 import {
   buildPassage,
   exitOrigin,
+  PASSAGE_DEPTH,
   nearOpening,
   playerPortalOwner,
   PORTAL,
@@ -165,7 +166,8 @@ export class World {
       const cmd = commands.get(p.id) ?? { ...emptyCommand(), yaw: p.yaw, pitch: p.pitch };
       p.yaw = cmd.yaw;
       p.pitch = cmd.pitch;
-      const open = this.openPortalsNear(p.origin);
+      let open = this.openPortalsNear(p.origin);
+      if (this.unstickFromPortals(p, open)) open = this.openPortalsNear(p.origin);
       const before = clone(p.origin);
       playerMove(this.tracerThrough(open), p, cmd, TICK_DT);
       this.passThroughPortals(p, open, before);
@@ -243,17 +245,39 @@ export class World {
   }
 
   private removePortals(match: (p: Portal) => boolean) {
+    const removed: Portal[] = [];
     let kept = 0;
     for (const pt of this.portals) {
-      if (match(pt)) this.passages.delete(pt.id);
-      else this.portals[kept++] = pt;
+      if (match(pt)) {
+        this.passages.delete(pt.id);
+        removed.push(pt);
+      } else this.portals[kept++] = pt;
     }
     this.portals.length = kept;
+    if (removed.length === 0) return;
+    // Anyone standing in a closed opening (or its partner's, which closes with it) is now in a wall.
+    const candidates = [...removed, ...this.portals];
+    for (const p of this.players.values()) {
+      if (p.alive) this.unstickFromPortals(p, this.openPortalsNear(p.origin), candidates);
+    }
   }
 
-  /** Linked portals a player box at this origin is close enough to step into. */
+  /**
+   * Linked portals a player box at this origin is close enough to step into. A portal
+   * whose exit is blocked (the ramp right in front of it, say) stays shut: its surface
+   * is solid, so you stand on it or bump into it instead of sinking into the tunnel.
+   */
   private openPortalsNear(origin: Vec3): Portal[] {
-    return this.portals.filter((pt) => nearOpening(origin, PLAYER_MINS, PLAYER_MAXS, pt) && this.linkedPortal(pt) !== null);
+    return this.portals.filter((pt) => {
+      if (!nearOpening(origin, PLAYER_MINS, PLAYER_MAXS, pt)) return false;
+      const to = this.linkedPortal(pt);
+      return to !== null && this.exitClear(origin, pt, to);
+    });
+  }
+
+  private exitClear(origin: Vec3, from: Portal, to: Portal): boolean {
+    const dest = exitOrigin(origin, PLAYER_MINS, PLAYER_MAXS, from, to);
+    return !this.tracerThrough([to]).traceBox(dest, dest, PLAYER_MINS, PLAYER_MAXS).startSolid;
   }
 
   /** The world as movement sees it with these portals open: their walls gone, tunnels behind them instead. */
@@ -282,8 +306,14 @@ export class World {
       if (!to) continue;
 
       const dest = exitOrigin(p.origin, PLAYER_MINS, PLAYER_MAXS, from, to);
-      // Something solid right in front of the exit: stay put rather than end up inside it.
-      if (this.tracerThrough([to]).traceBox(dest, dest, PLAYER_MINS, PLAYER_MAXS).startSolid) return;
+      if (this.tracerThrough([to]).traceBox(dest, dest, PLAYER_MINS, PLAYER_MAXS).startSolid) {
+        // Exit blocked where you crossed (openPortalsNear checked where you started). Back to
+        // the surface with no speed into it; next tick the portal is shut and the unstick pushes you out.
+        addScaled(p.origin, from.normal, -now.n, p.origin);
+        const into = dot(p.velocity, from.normal);
+        if (into < 0) addScaled(p.velocity, from.normal, -into, p.velocity);
+        return;
+      }
 
       copy(p.origin, dest);
       copy(p.prevOrigin, dest);
@@ -295,6 +325,32 @@ export class World {
       this.events.push({ type: "teleport", player: p.id, from: from.id, to: to.id });
       return;
     }
+  }
+
+  /**
+   * Safety net: if the player is inside something solid at a portal (it closed or moved
+   * while they stood half inside the opening), push them out in front of it.
+   * Returns true if they were moved.
+   */
+  private unstickFromPortals(p: PlayerState, open: readonly Portal[], candidates: readonly Portal[] = this.portals): boolean {
+    const here = this.tracerThrough(open);
+    if (!here.traceBox(p.origin, p.origin, PLAYER_MINS, PLAYER_MAXS).startSolid) return false;
+    const offset = vec3(0, 0, (PLAYER_MINS.z + PLAYER_MAXS.z) / 2);
+    const half = vec3((PLAYER_MAXS.x - PLAYER_MINS.x) / 2, (PLAYER_MAXS.y - PLAYER_MINS.y) / 2, (PLAYER_MAXS.z - PLAYER_MINS.z) / 2);
+    for (const pt of candidates) {
+      const c = portalLocal(add(p.origin, offset), pt);
+      if (Math.abs(c.r) > PORTAL.halfWidth || Math.abs(c.u) > PORTAL.halfHeight) continue;
+      const depth = Math.abs(pt.normal.x) * half.x + Math.abs(pt.normal.y) * half.y + Math.abs(pt.normal.z) * half.z;
+      if (c.n < -PASSAGE_DEPTH - depth || c.n > depth) continue;
+      const dest = addScaled(p.origin, pt.normal, depth + 0.1 - c.n);
+      if (this.collision.traceBox(dest, dest, PLAYER_MINS, PLAYER_MAXS).startSolid) continue;
+      copy(p.origin, dest);
+      copy(p.prevOrigin, dest);
+      const into = dot(p.velocity, pt.normal);
+      if (into < 0) addScaled(p.velocity, pt.normal, -into, p.velocity);
+      return true;
+    }
+    return false;
   }
 
   /** Turns the view to match the exit. Facing straight up or down out of a floor or ceiling, keep a sensible heading. */

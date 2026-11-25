@@ -207,6 +207,37 @@ describe("walking through portals", () => {
     expect(Math.abs(hops[0].yaw)).toBeCloseTo(Math.PI);
   });
 
+  it("keeps a floor portal solid when its exit is blocked, so you can't sink into it", () => {
+    const { world, p } = setup();
+    shoot(world, p, Math.PI); // west wall at y 0, just beside the foot of the ramp
+    set(p.origin, -416, -416, FLOOR_Z + 2);
+    set(p.prevOrigin, -416, -416, FLOOR_Z + 2);
+    expect(shoot(world, p, 0, -1.5).portal).not.toBeNull(); // floor pad under your feet, its up along +x
+    // Stand near the floor portal's back edge: that comes out low on the wall, into the ramp.
+    const floor = world.portals[1];
+    set(p.origin, floor.origin.x - 27, floor.origin.y + 10, FLOOR_Z + 2);
+    set(p.prevOrigin, floor.origin.x - 27, floor.origin.y + 10, FLOOR_Z + 2);
+    expect(walk(world, p, {}, 60)).toHaveLength(0);
+    expect(p.origin.z).toBeCloseTo(FLOOR_Z + 2, 0); // standing on it
+    expect(p.onGround).toBe(true);
+    walk(world, p, { forward: 1, yaw: Math.PI / 4 }, 60);
+    expect(p.origin.x).toBeGreaterThan(-300); // and can walk off
+  });
+
+  it("pushes you out if a portal closes while you're half inside it", () => {
+    const { world, p } = linkedWalls();
+    place(p, 505, 200); // box reaches 9 units into the east opening
+    set(p.origin, 505, 200, FLOOR_Z + 2); // standing on the opening's bottom edge, 2 up
+    set(p.prevOrigin, 505, 200, FLOOR_Z + 2);
+    walk(world, p, {}, 5);
+    expect(p.origin.x).toBeCloseTo(505);
+    shoot(world, p, Math.atan2(-300, 7)); // replaces the east portal you're standing in
+    expect(world.portals.some((pt) => Math.round(pt.origin.y) === 200)).toBe(false);
+    expect(p.origin.x).toBeLessThanOrEqual(EAST_X - 16 + 0.2);
+    walk(world, p, { forward: -1, yaw: 0 }, 30);
+    expect(p.origin.x).toBeLessThan(EAST_X - 100); // free to move again
+  });
+
   it("removes the opening when a portal is replaced", () => {
     const { world, p } = linkedWalls();
     shoot(world, p, yawToEast(-100)); // replaces the east portal at y 200

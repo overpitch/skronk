@@ -245,7 +245,7 @@ function fitInPolygon(p: Placement, vertices: readonly Vec3[]): Vec3 | null {
 // crosses the surface they come out of the other portal.
 
 /** How deep the tunnel behind an opening goes, and how thick its walls are. */
-const PASSAGE_DEPTH = 64;
+export const PASSAGE_DEPTH = 64;
 const FRAME_THICKNESS = 32;
 /** Start opening the wall when a box centre is this close in front of a portal. */
 const PASSAGE_REACH = 80;
@@ -333,8 +333,9 @@ export function exitOrigin(origin: Vec3, mins: Vec3, maxs: Vec3, from: Placement
   const off = centreOffset(mins, maxs);
   const half = halfExtents(mins, maxs);
   const c = portalLocal(throughPortalPoint(add(origin, off), from, to), to);
-  const maxR = Math.max(0, PORTAL.halfWidth - reach(half, to.right));
-  const maxU = Math.max(0, PORTAL.halfHeight - reach(half, to.up));
+  // A hair inside the opening's edges, so rounding never leaves the box touching the tunnel frame.
+  const maxR = Math.max(0, PORTAL.halfWidth - reach(half, to.right) - 0.125);
+  const maxU = Math.max(0, PORTAL.halfHeight - reach(half, to.up) - 0.125);
   const r = Math.max(-maxR, Math.min(maxR, c.r));
   const u = Math.max(-maxU, Math.min(maxU, c.u));
   const n = Math.max(0.1, c.n);
