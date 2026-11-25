@@ -1,0 +1,19 @@
+/**
+ * Things that happened during one tick, for presentation (sound, effects, HUD).
+ * The sim never reads these back; dropping them changes nothing about the game.
+ */
+import type { Vec3 } from "../math/vec3";
+
+export type PlayerId = number;
+
+export type SimEvent =
+  | { type: "fire"; player: PlayerId; projectile: number; origin: Vec3; dir: Vec3 }
+  | { type: "dryFire"; player: PlayerId }
+  /** A projectile hit level geometry. */
+  | { type: "impact"; projectile: number; owner: PlayerId; pos: Vec3; normal: Vec3 }
+  /** A projectile hit a player. `damage` is before armor. */
+  | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; damage: number; pos: Vec3 }
+  /** attacker is null for deaths with no killer, like falling out of the world. */
+  | { type: "kill"; attacker: PlayerId | null; victim: PlayerId }
+  | { type: "respawn"; player: PlayerId }
+  | { type: "pickup"; player: PlayerId; kind: string; index: number };

@@ -103,7 +103,7 @@ const out = [
   pointEntity({ classname: "player_spawn", origin: "100 100 25", angle: "270" }),
   pointEntity({ classname: "pickup_health", origin: "352 -384 81", amount: "25" }),
   pointEntity({ classname: "pickup_armor", origin: "-416 384 145", amount: "50" }),
-  pointEntity({ classname: "pickup_ammo", origin: "0 400 17", amount: "20" }),
+  pointEntity({ classname: "pickup_ammo", origin: "0 400 17", amount: "50" }),
   pointEntity({ classname: "light", origin: "0 0 320", light: "400" }),
   pointEntity({ classname: "light", origin: "352 -384 300", light: "250", _color: "1 0.85 0.6" }),
   pointEntity({ classname: "light", origin: "-416 384 300", light: "250", _color: "0.6 0.8 1" }),

@@ -14,12 +14,16 @@ Browser arena shooter with personal portals. Full brief: [docs/brief.md](docs/br
 Live build: https://overpitch.github.io/skronk/ (every push to `main` runs tests, builds and deploys via `.github/workflows/deploy.yml`).
 
 Load a map with `?map=<name>` (file in `public/assets/maps/<name>.map`). Default: `test_box`.
+Practice targets: `?dummies=N` (default 1, 0 for none); add `?dummyfire` to make them shoot back.
 
 ## Architecture rules
 
 - `src/sim/` is the simulation. It must not import `three`, the DOM, or anything in `src/render`, `src/client`. Fixed tick (`TICK_RATE`), driven only by `PlayerCommand`s. Bots, local players and remote players are all just command sources.
 - `src/level/types.ts` is the loader interface. The sim reads `LevelData`, never `.map` text. `src/level/trenchbroom/` is one loader implementation.
-- `src/render/` reads sim state and draws it. `src/client/` owns the browser: input devices, HUD, main loop.
+- `src/render/` reads sim state and draws it. `src/client/` owns the browser: input devices, HUD, audio, settings, main loop.
+- `src/bots/` turns world state into `PlayerCommand`s. Bots never touch sim state directly.
+- The sim reports what happened each tick in `world.events` (shots, hits, kills, pickups). Effects, sound and HUD react to those; the sim never reads them back.
+- Teleports (respawn, later portals) must set `prevOrigin` too, or the renderer interpolates across the map.
 - Coordinates everywhere: map units (1 unit ≈ 1 inch), **Z up**, right-handed, same as the `.map` file. Three.js runs Z-up too (`camera.up = (0,0,1)`); no axis conversion.
 - Angles: radians in code. Yaw 0 = +X, counter-clockwise. Pitch positive = look up. Map entity `angle` keys are degrees.
 - Determinism: same inputs on the same JS engine give the same result. Not bit-exact across browsers (`Math.sin` etc. may differ), so the network plan is server authority + client prediction, not lockstep.

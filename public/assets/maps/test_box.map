@@ -164,7 +164,7 @@
 {
 "classname" "pickup_ammo"
 "origin" "0 400 17"
-"amount" "20"
+"amount" "50"
 }
 {
 "classname" "light"

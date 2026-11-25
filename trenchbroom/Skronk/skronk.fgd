@@ -27,7 +27,7 @@
 
 @PointClass size(-16 -16 -16, 16 16 16) color(255 200 0) = pickup_ammo : "Ammo pickup"
 [
-    amount(integer) : "Amount" : 20
+    amount(integer) : "Amount" : 50
 ]
 
 @PointClass size(-8 -8 -8, 8 8 8) color(255 255 160) = light : "Point light"

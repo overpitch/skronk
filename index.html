@@ -8,13 +8,25 @@
   </head>
   <body>
     <canvas id="game"></canvas>
+    <div id="damage-flash"></div>
     <div id="crosshair"></div>
+    <div id="hitmarker"></div>
     <div id="debug"></div>
+    <div id="centre-msg"></div>
+    <div id="pickup-msg"></div>
+    <div id="hud" class="hidden">
+      <div class="vitals">
+        <span class="label">HEALTH</span><span id="hud-health" class="value">100</span>
+        <span class="label">ARMOR</span><span id="hud-armor" class="value">0</span>
+      </div>
+      <div id="hud-frags">FRAGS 0</div>
+      <div class="ammo"><span class="label">AMMO</span><span id="hud-ammo" class="value">100</span></div>
+    </div>
     <div id="overlay">
       <h1>SKRONK</h1>
       <p>Click to play &middot; or press A on a controller</p>
-      <p class="keys">WASD move &middot; Space jump &middot; Mouse look &middot; Esc release mouse</p>
-      <p class="keys">Controller: Menu button pauses</p>
+      <p class="keys">WASD move &middot; Space jump &middot; Mouse look &middot; Left click shoot &middot; Esc release mouse</p>
+      <p class="keys">Controller: right trigger shoots &middot; Menu button pauses</p>
       <button id="invert-look" class="setting" type="button" aria-pressed="false">Invert look: Off</button>
       <p class="keys">Click, or press Y on a controller</p>
       <p id="status"></p>
