@@ -35,6 +35,15 @@ describe("movement", () => {
     expect(Math.hypot(p.velocity.x, p.velocity.y)).toBeCloseTo(320, 0);
   });
 
+  it("sprints faster going forward, but not backward", () => {
+    const { world, p } = setup(-300, -300);
+    run(world, 0.5, {});
+    run(world, 1, { forward: 1, sprint: true, yaw: Math.PI / 4 });
+    expect(Math.hypot(p.velocity.x, p.velocity.y)).toBeCloseTo(448, 0);
+    run(world, 1.5, { forward: -1, sprint: true, yaw: Math.PI / 4 });
+    expect(Math.hypot(p.velocity.x, p.velocity.y)).toBeCloseTo(320, 0);
+  });
+
   it("stops at a wall and stays inside the room", () => {
     const { world, p } = setup(0, -300);
     run(world, 3, { forward: 1, yaw: -Math.PI / 2 }); // walk -Y into the south wall

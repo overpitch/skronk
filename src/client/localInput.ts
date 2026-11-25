@@ -16,6 +16,7 @@ const PAD_Y = 3;
 const PAD_LT = 6;
 const PAD_RT = 7;
 const PAD_MENU = 9;
+const PAD_L3 = 10;
 
 /** Radial deadzone, rescaled so the live range still starts at 0. */
 function deadzone(x: number, y: number): [number, number] {
@@ -47,7 +48,9 @@ export class LocalInput {
    */
   private portalPresses = 0;
   private mouseButtons = 0;
-  private pad = { forward: 0, right: 0, jump: false, fire: false, portal: false };
+  private pad = { forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false };
+  /** Left stick click toggles sprint on; it ends when you stop pushing forward. */
+  private padSprint = false;
   private padPrev: boolean[] = [];
   /** For the debug HUD: what the browser reports, or null if no pad is visible yet. */
   padStatus: string | null = null;
@@ -102,7 +105,8 @@ export class LocalInput {
     const pads = navigator.getGamepads?.() ?? [];
     const pad = pads.find((p) => p && p.connected) ?? null;
     if (!pad) {
-      this.pad = { forward: 0, right: 0, jump: false, fire: false, portal: false };
+      this.pad = { forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false };
+      this.padSprint = false;
       this.padPrev = [];
       this.padStatus = null;
       return;
@@ -119,6 +123,7 @@ export class LocalInput {
     } else if (justPressed(PAD_MENU)) {
       this.onDeactivate();
     }
+    if (!menuOpen && justPressed(PAD_L3)) this.padSprint = !this.padSprint;
     this.padPrev = pad.buttons.map((b) => b.pressed);
     if (menuOpen) dt = 0;
 
@@ -127,10 +132,12 @@ export class LocalInput {
     // Squared response curve: fine aim near centre, fast turns at the edge.
     const curve = (v: number) => Math.sign(v) * v * v;
     this.addLook(-curve(lx) * PAD_YAW_RATE * dt, -curve(ly) * PAD_PITCH_RATE * dt);
+    if (-my < 0.2) this.padSprint = false;
     this.pad = {
       forward: -my,
       right: mx,
       jump: pressed(PAD_A),
+      sprint: this.padSprint,
       fire: pressed(PAD_RT),
       portal: pressed(PAD_LT),
     };
@@ -146,6 +153,7 @@ export class LocalInput {
       yaw: this.yaw,
       pitch: this.pitch,
       jump: k("Space") === 1 || this.pad.jump,
+      sprint: k("ShiftLeft", "ShiftRight") === 1 || this.pad.sprint,
       fire: (this.mouseButtons & 1) !== 0 || this.pad.fire,
       // E as well as right click: two-finger clicks are awkward on a trackpad mid-fight.
       portal: this.takePortalPress() || this.pad.portal,

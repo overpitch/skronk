@@ -126,7 +126,7 @@ async function start() {
     while (acc >= TICK_DT && ticks < MAX_TICKS_PER_FRAME) {
       const commands = new Map<PlayerId, PlayerCommand>();
       const local = input.command();
-      commands.set(LOCAL_PLAYER, active ? local : { ...local, forward: 0, right: 0, jump: false, fire: false, portal: false });
+      commands.set(LOCAL_PLAYER, active ? local : { ...local, forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false });
       for (const bot of bots) commands.set(bot.id, bot.command(world));
       world.step(commands);
       for (const e of world.events) {

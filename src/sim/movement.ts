@@ -10,6 +10,8 @@ import type { PlayerCommand } from "./command";
 export const MOVE = {
   gravity: 800,
   maxSpeed: 320,
+  /** Ground speed multiplier while sprinting forward. Air control is unchanged. */
+  sprintFactor: 1.4,
   accelerate: 10,
   airAccelerate: 10,
   /** Cap on wish speed used for air acceleration; small value = air strafing, not air running. */
@@ -221,10 +223,11 @@ export function playerMove(world: Tracer, s: MoveState, cmd: PlayerCommand, dt: 
   const fwd = Math.max(-1, Math.min(1, cmd.forward));
   const right = Math.max(-1, Math.min(1, cmd.right));
   // forward = (cy, sy, 0), right = (sy, -cy, 0)
-  const wish = vec3((cy * fwd + sy * right) * MOVE.maxSpeed, (sy * fwd - cy * right) * MOVE.maxSpeed, 0);
+  const top = cmd.sprint && fwd > 0 ? MOVE.maxSpeed * MOVE.sprintFactor : MOVE.maxSpeed;
+  const wish = vec3((cy * fwd + sy * right) * top, (sy * fwd - cy * right) * top, 0);
   let wishSpeed = Math.hypot(wish.x, wish.y);
   const wishDir = wishSpeed > 0 ? vec3(wish.x / wishSpeed, wish.y / wishSpeed, 0) : vec3();
-  if (wishSpeed > MOVE.maxSpeed) wishSpeed = MOVE.maxSpeed;
+  if (wishSpeed > top) wishSpeed = top;
 
   if (s.onGround) {
     s.velocity.z = 0;

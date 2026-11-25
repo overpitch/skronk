@@ -13,6 +13,8 @@ export interface PlayerCommand {
   /** Radians, positive looks up. */
   pitch: number;
   jump: boolean;
+  /** Held: run faster, only while moving forward. */
+  sprint: boolean;
   /** Primary trigger: shoot. */
   fire: boolean;
   /** Secondary trigger: fire a portal (one per press). */
@@ -25,6 +27,7 @@ export const emptyCommand = (): PlayerCommand => ({
   yaw: 0,
   pitch: 0,
   jump: false,
+  sprint: false,
   fire: false,
   portal: false,
 });
