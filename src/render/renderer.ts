@@ -11,7 +11,8 @@ import type { World } from "../sim/world";
 import { Effects } from "./effects";
 import { PlayerModels } from "./players";
 import { PortalViews } from "./portals";
-import { playerPortalOwner, type PortalOwner } from "../sim/portals";
+import { playerPortalOwner, type PortalOwner, type PortalSlot } from "../sim/portals";
+import { FIZZLE_COLOR, portalColor } from "./portalColors";
 import { TextureLibrary } from "./textures";
 import { ViewModel } from "./viewmodel";
 
@@ -19,10 +20,6 @@ const HORIZONTAL_FOV_DEG = 100;
 /** How long a local shot's tracer takes to slide from the gun muzzle onto its true path. */
 const TRACER_CONVERGE_SECONDS = 0.09;
 const PUNCH_RECOVERY = 12; // per second
-/** Your portals, and everyone else's (team colours come with team modes). */
-const MY_PORTAL_COLOR = 0x2fe0c8;
-const OTHER_PORTAL_COLOR = 0xc060ff;
-const FIZZLE_COLOR = 0x8a8a8a;
 
 export interface RenderFrame {
   world: World;
@@ -162,9 +159,9 @@ export class GameRenderer {
     this.up.crossVectors(this.right, this.forward);
 
     const myOwner = playerPortalOwner(localId);
-    const portalColor = (owner: PortalOwner) => (owner === myOwner ? MY_PORTAL_COLOR : OTHER_PORTAL_COLOR);
-    this.handleEvents(events, localId, timeSeconds, portalColor);
-    this.portals.update(world.portals, (p) => world.linkedPortal(p) !== null, (p) => portalColor(p.owner), timeSeconds);
+    const colorOf = (owner: PortalOwner, slot: PortalSlot) => portalColor(owner === myOwner, slot);
+    this.handleEvents(events, localId, timeSeconds, colorOf);
+    this.portals.update(world.portals, (p) => world.linkedPortal(p) !== null, (p) => colorOf(p.owner, p.slot), timeSeconds);
 
     // Other players, interpolated between ticks.
     const others = [...world.players.values()].filter((p) => p.id !== localId);
@@ -231,17 +228,18 @@ export class GameRenderer {
     events: readonly SimEvent[],
     localId: PlayerId,
     now: number,
-    portalColor: (owner: PortalOwner) => THREE.ColorRepresentation,
+    colorOf: (owner: PortalOwner, slot: PortalSlot) => THREE.ColorRepresentation,
   ) {
     for (const e of events) {
       switch (e.type) {
         case "portalShot": {
           const from = e.player === localId ? this.muzzle(this.v1) : this.v1.set(e.origin.x, e.origin.y, e.origin.z);
           const to = this.v2.set(e.end.x, e.end.y, e.end.z);
-          const color = e.portal === null ? FIZZLE_COLOR : portalColor(e.owner);
+          // The beam shows which end you fired, even when it fizzles; grey sparks say it didn't stick.
+          const color = colorOf(e.owner, e.slot);
           this.effects.beam(from, to, color);
           const normal = new THREE.Vector3(e.normal.x, e.normal.y, e.normal.z);
-          if (normal.lengthSq() > 0) this.effects.splash(to, normal, color, e.portal === null ? 10 : 28);
+          if (normal.lengthSq() > 0) this.effects.splash(to, normal, e.portal === null ? FIZZLE_COLOR : color, e.portal === null ? 10 : 28);
           if (e.player === localId) this.punchPitch += 0.003;
           break;
         }

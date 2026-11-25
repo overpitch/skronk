@@ -27,6 +27,16 @@ body {
   pointer-events: none;
 }
 
+/* A ring in the colour of your next portal shot, clear of the dot. */
+#crosshair::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--portal-next, transparent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
 #debug {
   position: fixed;
   left: 10px;

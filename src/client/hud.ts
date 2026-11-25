@@ -4,6 +4,7 @@
  */
 import type { PlayerId, SimEvent } from "../sim/events";
 import { TICK_RATE, type PlayerState, type World } from "../sim/world";
+import { portalColorCss } from "../render/portalColors";
 
 const HIT_MARKER_SECONDS = 0.14;
 const KILL_MARKER_SECONDS = 0.35;
@@ -20,6 +21,8 @@ export class Hud {
   private flash = el("damage-flash");
   private centre = el("centre-msg");
   private note = el("pickup-msg");
+  private crosshair = el("crosshair");
+  private crosshairColor = "";
   private markerTime = 0;
   private flashLevel = 0;
   private centreText = "";
@@ -62,6 +65,13 @@ export class Hud {
       centre = this.centreText;
     }
     if (this.centre.textContent !== centre) this.centre.textContent = centre;
+
+    // The ring round the crosshair is the colour your next portal shot places.
+    const next = portalColorCss(true, world.nextPortalSlot(world.portalOwnerOf(me)));
+    if (next !== this.crosshairColor) {
+      this.crosshairColor = next;
+      this.crosshair.style.setProperty("--portal-next", next);
+    }
 
     setText(this.health, String(Math.max(0, me.health)));
     setText(this.armor, String(me.armor));

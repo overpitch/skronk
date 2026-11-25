@@ -41,9 +41,13 @@ export interface Placement {
   right: Vec3;
 }
 
+/** Which end of a pair. Shots alternate 0, 1, 0, 1, so each new portal replaces the older end. */
+export type PortalSlot = 0 | 1;
+
 export interface Portal extends Placement {
   id: number;
   owner: PortalOwner;
+  slot: PortalSlot;
   placedTick: number;
 }
 

@@ -24,4 +24,4 @@ export type SimEvent =
    */
   /** A player went in through portal `from` and came out of `to`; their view was turned to match. */
   | { type: "teleport"; player: PlayerId; from: number; to: number }
-  | { type: "portalShot"; player: PlayerId; owner: string; origin: Vec3; end: Vec3; normal: Vec3; portal: number | null; replaced: number | null };
+  | { type: "portalShot"; player: PlayerId; owner: string; slot: 0 | 1; origin: Vec3; end: Vec3; normal: Vec3; portal: number | null; replaced: number | null };

@@ -215,3 +215,21 @@ describe("walking through portals", () => {
     expect(p.origin.x).toBeLessThanOrEqual(EAST_X - 16 + 0.1);
   });
 });
+
+describe("portal ends", () => {
+  it("alternates ends, so each shot replaces the older one, and a fizzle doesn't skip", () => {
+    const { world, p } = setup();
+    const owner = world.portalOwnerOf(p);
+    expect(world.nextPortalSlot(owner)).toBe(0);
+    expect(shoot(world, p, yawToEast(300)).slot).toBe(0);
+    expect(world.nextPortalSlot(owner)).toBe(1);
+    expect(shoot(world, p, Math.PI / 2).portal).toBeNull(); // fizzle on the north wall
+    expect(world.nextPortalSlot(owner)).toBe(1);
+    expect(shoot(world, p, yawToEast(100)).slot).toBe(1);
+    const third = shoot(world, p, yawToEast(-100));
+    expect(third.slot).toBe(0);
+    const bySlot = world.portals.map((pt) => [pt.slot, Math.round(pt.origin.y)]).sort();
+    expect(bySlot).toEqual([[0, -100], [1, 100]]);
+    expect(world.nextPortalSlot(owner)).toBe(1);
+  });
+});

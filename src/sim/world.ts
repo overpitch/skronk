@@ -21,6 +21,7 @@ import {
   type Portal,
   type PortalOwner,
   type PortalPassage,
+  type PortalSlot,
 } from "./portals";
 import { TICK_DT } from "./tick";
 import { segmentVsBox, viewDirection, VITALS, WEAPON, type Projectile } from "./weapon";
@@ -120,6 +121,15 @@ export class World {
     return playerPortalOwner(p.id);
   }
 
+  /** The end this owner's next portal shot places (and replaces, if both are up). A fizzle doesn't change it. */
+  nextPortalSlot(owner: PortalOwner): PortalSlot {
+    const mine = this.portals.filter((pt) => pt.owner === owner);
+    if (mine.length === 0) return 0;
+    if (mine.length === 1) return mine[0].slot === 0 ? 1 : 0;
+    const older = mine[0].placedTick < mine[1].placedTick || (mine[0].placedTick === mine[1].placedTick && mine[0].id < mine[1].id);
+    return (older ? mine[0] : mine[1]).slot;
+  }
+
   /** The other end of a portal's pair, or null while it is the only one. */
   linkedPortal(portal: Portal): Portal | null {
     return this.portals.find((o) => o.owner === portal.owner && o !== portal) ?? null;
@@ -196,7 +206,7 @@ export class World {
     this.events.push({ type: "fire", player: p.id, projectile: projectile.id, origin: clone(eye), dir });
   }
 
-  /** Secondary trigger: one portal shot per press, replacing the owner's oldest portal if it lands. */
+  /** Secondary trigger: one portal shot per press into the owner's next slot, replacing the older end if it lands. */
   private updatePortalGun(p: PlayerState, cmd: PlayerCommand) {
     if (p.portalCooldown > 0) p.portalCooldown--;
     const pressed = cmd.portal && !p.portalHeld;
@@ -205,11 +215,8 @@ export class World {
     p.portalCooldown = PORTAL.cooldownTicks;
 
     const owner = this.portalOwnerOf(p);
-    const mine = this.portals.filter((pt) => pt.owner === owner);
-    const oldest =
-      mine.length >= 2
-        ? mine.reduce((a, b) => (b.placedTick < a.placedTick || (b.placedTick === a.placedTick && b.id < a.id) ? b : a))
-        : null;
+    const slot = this.nextPortalSlot(owner);
+    const oldest = this.portals.find((pt) => pt.owner === owner && pt.slot === slot) ?? null;
     // The portal being replaced doesn't block the new one.
     const others = this.portals.filter((pt) => pt !== oldest);
     const eye = vec3(p.origin.x, p.origin.y, p.origin.z + EYE_HEIGHT);
@@ -218,7 +225,7 @@ export class World {
     let placed: Portal | null = null;
     if (shot.placement) {
       if (oldest) this.removePortals((pt) => pt === oldest);
-      placed = { ...shot.placement, id: this.nextPortalId++, owner, placedTick: this.tick };
+      placed = { ...shot.placement, id: this.nextPortalId++, owner, slot, placedTick: this.tick };
       this.portals.push(placed);
       this.passages.set(placed.id, buildPassage(this.level, placed));
     }
@@ -226,6 +233,7 @@ export class World {
       type: "portalShot",
       player: p.id,
       owner,
+      slot,
       origin: eye,
       end: shot.end,
       normal: shot.normal,
