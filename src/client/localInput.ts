@@ -137,7 +137,8 @@ export class LocalInput {
       pitch: this.pitch,
       jump: k("Space") === 1 || this.pad.jump,
       fire: (this.mouseButtons & 1) !== 0 || this.pad.fire,
-      portal: (this.mouseButtons & 2) !== 0 || this.pad.portal,
+      // E as well as right click: two-finger clicks are awkward on a trackpad mid-fight.
+      portal: (this.mouseButtons & 2) !== 0 || k("KeyE") === 1 || this.pad.portal,
     };
   }
 
