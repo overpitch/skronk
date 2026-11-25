@@ -80,6 +80,25 @@ body {
   pointer-events: auto;
 }
 
+#overlay .setting.slider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  cursor: default;
+}
+
+#overlay .setting.slider input {
+  width: 180px;
+  accent-color: #7fbfff;
+  cursor: pointer;
+}
+
+#overlay .setting.slider output {
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
+}
+
 #overlay .setting[aria-pressed="true"] {
   background: rgba(120, 180, 255, 0.25);
   border-color: rgba(140, 190, 255, 0.8);

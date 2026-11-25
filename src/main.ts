@@ -2,7 +2,7 @@ import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
 import { LocalInput } from "./client/localInput";
-import { loadSettings, saveSettings } from "./client/settings";
+import { loadSettings, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { lerp, vec3 } from "./math/vec3";
 import { GameRenderer } from "./render/renderer";
@@ -71,8 +71,16 @@ async function start() {
 
   const settings = loadSettings();
   const invertButton = document.getElementById("invert-look") as HTMLButtonElement;
+  const sensSlider = document.getElementById("mouse-sens") as HTMLInputElement;
+  const sensValue = document.getElementById("mouse-sens-value")!;
+  sensSlider.min = String(MOUSE_SENSITIVITY_RANGE.min);
+  sensSlider.max = String(MOUSE_SENSITIVITY_RANGE.max);
+  sensSlider.step = String(MOUSE_SENSITIVITY_RANGE.step);
   const applySettings = () => {
     input.invertLook = settings.invertLook;
+    input.mouseSensitivity = settings.mouseSensitivity;
+    sensSlider.value = String(settings.mouseSensitivity);
+    sensValue.textContent = settings.mouseSensitivity.toFixed(2);
     invertButton.textContent = `Invert look: ${settings.invertLook ? "On" : "Off"}`;
     invertButton.setAttribute("aria-pressed", String(settings.invertLook));
   };
@@ -87,6 +95,15 @@ async function start() {
     invertButton.blur();
   });
   input.onToggleInvertLook = toggleInvertLook;
+  sensSlider.addEventListener("input", () => {
+    settings.mouseSensitivity = Number(sensSlider.value);
+    applySettings();
+  });
+  sensSlider.addEventListener("change", () => {
+    saveSettings(settings);
+    // Otherwise arrow keys would keep nudging the slider during play.
+    sensSlider.blur();
+  });
   applySettings();
   status.textContent = `${level.name}: ${level.brushes.length} brushes, ${level.spawns.length} spawns`;
 

@@ -5,12 +5,16 @@
 export interface Settings {
   /** Flight-stick style: mouse/stick back (down) looks up. */
   invertLook: boolean;
+  /** Multiplier on the base mouse look speed. */
+  mouseSensitivity: number;
 }
+
+export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
 
 const STORAGE_KEY = "skronk.settings";
 
 export function defaultSettings(): Settings {
-  return { invertLook: false };
+  return { invertLook: false, mouseSensitivity: 1 };
 }
 
 export function loadSettings(): Settings {
@@ -18,6 +22,10 @@ export function loadSettings(): Settings {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
     if (typeof saved.invertLook === "boolean") settings.invertLook = saved.invertLook;
+    const sens = saved.mouseSensitivity;
+    if (typeof sens === "number" && sens >= MOUSE_SENSITIVITY_RANGE.min && sens <= MOUSE_SENSITIVITY_RANGE.max) {
+      settings.mouseSensitivity = sens;
+    }
   } catch {
     // Unreadable storage: keep defaults.
   }

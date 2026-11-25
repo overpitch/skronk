@@ -30,6 +30,8 @@ export class LocalInput {
   pitch = 0;
   /** Flight-stick style: pulling back (mouse or stick down) looks up. */
   invertLook = false;
+  /** Player's multiplier on the base mouse look speed. */
+  mouseSensitivity = 1;
   /** Called when the player first engages (click or gamepad button), to hide the menu. */
   onActivate: () => void = () => {};
   /** Called when the mouse is released or the gamepad Menu button pauses. */
@@ -68,7 +70,8 @@ export class LocalInput {
     });
     document.addEventListener("mousemove", (e) => {
       if (document.pointerLockElement !== canvas) return;
-      this.addLook(-e.movementX * MOUSE_SENSITIVITY, -e.movementY * MOUSE_SENSITIVITY);
+      const k = MOUSE_SENSITIVITY * this.mouseSensitivity;
+      this.addLook(-e.movementX * k, -e.movementY * k);
     });
     document.addEventListener("mousedown", (e) => {
       if (document.pointerLockElement === canvas) this.mouseButtons = e.buttons;
