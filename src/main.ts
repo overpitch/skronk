@@ -1,4 +1,4 @@
-import { TargetDummy } from "./bots/targetDummy";
+import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
 import { LocalInput } from "./client/localInput";
@@ -25,9 +25,12 @@ const debug = document.getElementById("debug")!;
 async function start() {
   const params = new URLSearchParams(location.search);
   const mapName = params.get("map") ?? "test_box";
-  // ?dummies=N practice targets (default 1); ?dummyfire makes them shoot back.
+  // ?dummies=N practice targets (default 1); ?dummyfire makes them shoot back;
+  // ?dummyspeed=0..1 sets how fast they strafe (0 stands still).
   const dummyCount = Math.max(0, Math.min(8, Number(params.get("dummies") ?? 1) || 0));
   const dummiesShoot = params.has("dummyfire");
+  const speedParam = Number(params.get("dummyspeed"));
+  const dummySpeed = params.has("dummyspeed") && Number.isFinite(speedParam) ? Math.max(0, Math.min(1, speedParam)) : DUMMY_DEFAULT_SPEED;
   const assets = `${import.meta.env.BASE_URL}assets`;
   status.textContent = `Loading ${mapName}…`;
   const level = await new TrenchBroomLoader().load(`${assets}/maps/${mapName}.map`);
@@ -38,7 +41,7 @@ async function start() {
   for (let i = 0; i < dummyCount; i++) {
     const id = LOCAL_PLAYER + 1 + i;
     world.addPlayer(id);
-    bots.push(new TargetDummy(id, dummiesShoot));
+    bots.push(new TargetDummy(id, dummiesShoot, dummySpeed));
   }
   const nameOf = (id: PlayerId) => (id === LOCAL_PLAYER ? "yourself" : dummyCount > 1 ? `Dummy ${id - LOCAL_PLAYER}` : "the dummy");
   const renderer = new GameRenderer(canvas, `${assets}/textures`);

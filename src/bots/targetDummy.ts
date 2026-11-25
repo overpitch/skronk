@@ -1,6 +1,7 @@
 /**
- * Practice target: strafes back and forth facing the nearest player, hops now
- * and then, and optionally fires sloppy bursts back. Like every participant it
+ * Practice target: strafes back and forth facing the nearest player and
+ * optionally fires sloppy bursts back. Speed is a fraction of run speed; at
+ * full speed it also hops now and then. Like every participant it
  * only produces PlayerCommands; real bots (milestone 4) replace it.
  */
 import { vec3 } from "../math/vec3";
@@ -9,6 +10,8 @@ import { EYE_HEIGHT } from "../sim/movement";
 import type { PlayerId, PlayerState, World } from "../sim/world";
 
 const STRAFE_PERIOD = 110; // ticks for one left-right cycle
+/** Default speed: an easy walking target (a third of run speed). */
+export const DUMMY_DEFAULT_SPEED = 0.35;
 const HOP_EVERY = 230;
 const BURST_EVERY = 150;
 const BURST_LENGTH = 24;
@@ -24,6 +27,8 @@ export class TargetDummy {
   constructor(
     readonly id: PlayerId,
     private shoots = false,
+    /** 0 stands still, 1 strafes at full run speed. */
+    private speed = DUMMY_DEFAULT_SPEED,
   ) {}
 
   command(world: World): PlayerCommand {
@@ -46,9 +51,10 @@ export class TargetDummy {
     const cycle = Math.floor(world.tick / STRAFE_PERIOD);
     const phase = (world.tick % STRAFE_PERIOD) / STRAFE_PERIOD;
     const pause = 0.1 + hash(cycle) * 0.2; // brief stop when changing direction
-    cmd.right = phase < 0.5 - pause / 2 ? 1 : phase > 0.5 && phase < 1 - pause / 2 ? -1 : 0;
-    cmd.forward = hash(cycle + 7) < 0.3 ? 0.5 : 0;
-    cmd.jump = world.tick % HOP_EVERY === 0;
+    const dir = phase < 0.5 - pause / 2 ? 1 : phase > 0.5 && phase < 1 - pause / 2 ? -1 : 0;
+    cmd.right = dir * this.speed;
+    cmd.forward = hash(cycle + 7) < 0.3 ? 0.5 * this.speed : 0;
+    cmd.jump = this.speed >= 0.7 && world.tick % HOP_EVERY === 0;
     return cmd;
   }
 }
