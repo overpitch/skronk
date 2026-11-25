@@ -11,6 +11,8 @@ Browser arena shooter with personal portals. Full brief: [docs/brief.md](docs/br
 - `npm run maps:test`: regenerate `public/assets/maps/test_box.map`
 - `npm run tb:install`: symlink `trenchbroom/Skronk` into TrenchBroom's user games folder
 
+Live build: https://overpitch.github.io/skronk/ (every push to `main` runs tests, builds and deploys via `.github/workflows/deploy.yml`).
+
 Load a map with `?map=<name>` (file in `public/assets/maps/<name>.map`). Default: `test_box`.
 
 ## Architecture rules
