@@ -22,4 +22,6 @@ export type SimEvent =
    * fizzled (normal is zero if it hit nothing in range). `replaced` is the id
    * of the owner's portal it took the place of, if any.
    */
+  /** A player went in through portal `from` and came out of `to`; their view was turned to match. */
+  | { type: "teleport"; player: PlayerId; from: number; to: number }
   | { type: "portalShot"; player: PlayerId; owner: string; origin: Vec3; end: Vec3; normal: Vec3; portal: number | null; replaced: number | null };

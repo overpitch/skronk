@@ -5,8 +5,8 @@
  * under it. Near an edge or an obstacle it slides over to fit, like a
  * picture being nudged onto a wall, and gives up if there is no room.
  */
-import { addScaled, clone, cross, dot, length, normalize, scale, sub, vec3, type Vec3 } from "../math/vec3";
-import type { LevelData } from "../level/types";
+import { add, addScaled, clone, cross, dot, length, normalize, scale, sub, vec3, type Vec3 } from "../math/vec3";
+import type { CollisionBrush, CollisionPlane, LevelData } from "../level/types";
 import type { CollisionWorld } from "./collision";
 import type { PlayerId } from "./events";
 
@@ -232,4 +232,138 @@ function fitInPolygon(p: Placement, vertices: readonly Vec3[]): Vec3 | null {
   }
   for (let i = 0; i < n; i++) if (slack(i).gap < -0.01) return null;
   return addScaled(addScaled(p.origin, p.right, cx), p.up, cy);
+}
+
+// ---------------------------------------------------------------------------
+// Passing through. Near a linked portal, a player's movement ignores the wall
+// the portal is on and collides with a short tunnel behind the opening
+// instead, so they can step into the wall up to their centre. Once the centre
+// crosses the surface they come out of the other portal.
+
+/** How deep the tunnel behind an opening goes, and how thick its walls are. */
+const PASSAGE_DEPTH = 64;
+const FRAME_THICKNESS = 32;
+/** Start opening the wall when a box centre is this close in front of a portal. */
+const PASSAGE_REACH = 80;
+
+export interface PortalPassage {
+  /** Level brushes the portal is cut into; ignored while passing through. */
+  backing: Set<number>;
+  /** Tunnel walls behind the opening, so nobody slides sideways into the wall. */
+  frame: CollisionBrush[];
+}
+
+export function buildPassage(level: LevelData, p: Placement): PortalPassage {
+  const a = PORTAL.halfWidth;
+  const b = PORTAL.halfHeight;
+  const t = FRAME_THICKNESS;
+  const d = PASSAGE_DEPTH;
+
+  // Everything inside the tunnel's space: the wall itself, and anything layered
+  // behind it (a thin panel on a thicker wall, a pad on the floor).
+  const corners = boxCorners(p, -a, a, -b, b, -d, -0.25);
+  const lo = vec3(Infinity, Infinity, Infinity);
+  const hi = vec3(-Infinity, -Infinity, -Infinity);
+  for (const c of corners) {
+    lo.x = Math.min(lo.x, c.x); lo.y = Math.min(lo.y, c.y); lo.z = Math.min(lo.z, c.z);
+    hi.x = Math.max(hi.x, c.x); hi.y = Math.max(hi.y, c.y); hi.z = Math.max(hi.z, c.z);
+  }
+  const backing = new Set<number>();
+  level.brushes.forEach((brush, i) => {
+    if (brush.mins.x > hi.x || brush.maxs.x < lo.x || brush.mins.y > hi.y || brush.maxs.y < lo.y || brush.mins.z > hi.z || brush.maxs.z < lo.z) return;
+    // Separated if every tunnel corner is outside one of the brush's planes.
+    const separated = brush.planes.some((pl) => corners.every((c) => dot(pl.normal, c) - pl.dist > 0.01));
+    if (!separated) backing.add(i);
+  });
+
+  const frame = [
+    orientedBox(p, -a - t, -a, -b - t, b + t, -d, 0), // left
+    orientedBox(p, a, a + t, -b - t, b + t, -d, 0), // right
+    orientedBox(p, -a, a, -b - t, -b, -d, 0), // bottom
+    orientedBox(p, -a, a, b, b + t, -d, 0), // top
+    orientedBox(p, -a - t, a + t, -b - t, b + t, -d - t, -d), // back
+  ];
+  return { backing, frame };
+}
+
+/** Box centre offset from a player's origin (the box is taller above the origin than below). */
+const centreOffset = (mins: Vec3, maxs: Vec3) => scale(add(mins, maxs), 0.5);
+const halfExtents = (mins: Vec3, maxs: Vec3) => scale(sub(maxs, mins), 0.5);
+/** How far an axis-aligned box with these half extents reaches along a unit direction. */
+const reach = (half: Vec3, dir: Vec3) => Math.abs(dir.x) * half.x + Math.abs(dir.y) * half.y + Math.abs(dir.z) * half.z;
+
+/** In-portal coordinates of a point: along right, up and normal from the centre. */
+export function portalLocal(point: Vec3, p: Placement): { r: number; u: number; n: number } {
+  const d = sub(point, p.origin);
+  return { r: dot(d, p.right), u: dot(d, p.up), n: dot(d, p.normal) };
+}
+
+/** A box (given by origin, mins, maxs) is close enough in front of the opening to start passing through. */
+export function nearOpening(origin: Vec3, mins: Vec3, maxs: Vec3, p: Placement): boolean {
+  const c = portalLocal(add(origin, centreOffset(mins, maxs)), p);
+  const depth = reach(halfExtents(mins, maxs), p.normal);
+  return c.n >= -depth && c.n <= PASSAGE_REACH && Math.abs(c.r) <= PORTAL.halfWidth && Math.abs(c.u) <= PORTAL.halfHeight;
+}
+
+/** Carries a direction in through `from` and out of `to`: in becomes out, and left stays on your left. */
+export function throughPortalDir(v: Vec3, from: Placement, to: Placement, out: Vec3 = vec3()): Vec3 {
+  const r = dot(v, from.right);
+  const u = dot(v, from.up);
+  const n = dot(v, from.normal);
+  out.x = -r * to.right.x + u * to.up.x - n * to.normal.x;
+  out.y = -r * to.right.y + u * to.up.y - n * to.normal.y;
+  out.z = -r * to.right.z + u * to.up.z - n * to.normal.z;
+  return out;
+}
+
+export function throughPortalPoint(point: Vec3, from: Placement, to: Placement): Vec3 {
+  return add(to.origin, throughPortalDir(sub(point, from.origin), from, to));
+}
+
+/**
+ * Where a box comes out of `to` when its centre has just crossed `from`:
+ * mirrored through the pair, kept inside the exit opening and just in front
+ * of it. Returns the new origin.
+ */
+export function exitOrigin(origin: Vec3, mins: Vec3, maxs: Vec3, from: Placement, to: Placement): Vec3 {
+  const off = centreOffset(mins, maxs);
+  const half = halfExtents(mins, maxs);
+  const c = portalLocal(throughPortalPoint(add(origin, off), from, to), to);
+  const maxR = Math.max(0, PORTAL.halfWidth - reach(half, to.right));
+  const maxU = Math.max(0, PORTAL.halfHeight - reach(half, to.up));
+  const r = Math.max(-maxR, Math.min(maxR, c.r));
+  const u = Math.max(-maxU, Math.min(maxU, c.u));
+  const n = Math.max(0.1, c.n);
+  const centre = addScaled(addScaled(addScaled(to.origin, to.right, r), to.up, u), to.normal, n);
+  return sub(centre, off);
+}
+
+function boxCorners(p: Placement, r0: number, r1: number, u0: number, u1: number, n0: number, n1: number): Vec3[] {
+  const out: Vec3[] = [];
+  for (const r of [r0, r1]) for (const u of [u0, u1]) for (const n of [n0, n1]) {
+    out.push(addScaled(addScaled(addScaled(p.origin, p.right, r), p.up, u), p.normal, n));
+  }
+  return out;
+}
+
+/** A convex brush that is a box in portal coordinates. */
+function orientedBox(p: Placement, r0: number, r1: number, u0: number, u1: number, n0: number, n1: number): CollisionBrush {
+  const o = { r: dot(p.origin, p.right), u: dot(p.origin, p.up), n: dot(p.origin, p.normal) };
+  const plane = (normal: Vec3, dist: number): CollisionPlane => ({ normal: clone(normal), dist, surface: -1 });
+  const planes = [
+    plane(p.right, o.r + r1),
+    plane(scale(p.right, -1), -(o.r + r0)),
+    plane(p.up, o.u + u1),
+    plane(scale(p.up, -1), -(o.u + u0)),
+    plane(p.normal, o.n + n1),
+    plane(scale(p.normal, -1), -(o.n + n0)),
+  ];
+  const corners = boxCorners(p, r0, r1, u0, u1, n0, n1);
+  const mins = vec3(Infinity, Infinity, Infinity);
+  const maxs = vec3(-Infinity, -Infinity, -Infinity);
+  for (const c of corners) {
+    mins.x = Math.min(mins.x, c.x); mins.y = Math.min(mins.y, c.y); mins.z = Math.min(mins.z, c.z);
+    maxs.x = Math.max(maxs.x, c.x); maxs.y = Math.max(maxs.y, c.y); maxs.z = Math.max(maxs.z, c.z);
+  }
+  return { planes, mins, maxs };
 }

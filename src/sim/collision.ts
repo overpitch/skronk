@@ -23,10 +23,26 @@ export interface TraceResult {
   allSolid: boolean;
 }
 
-export class CollisionWorld {
+/** Anything movement can trace against: the plain world, or the world with portal openings cut in it. */
+export interface Tracer {
+  traceBox(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3): TraceResult;
+}
+
+export class CollisionWorld implements Tracer {
   constructor(readonly brushes: CollisionBrush[]) {}
 
-  traceBox(start: Vec3, end: Vec3, mins: Vec3, maxs: Vec3): TraceResult {
+  /**
+   * `skip`: level brush indices to ignore. `extra`: more brushes to collide
+   * with (reported with brush index -2 - i). Portals use these to open a hole.
+   */
+  traceBox(
+    start: Vec3,
+    end: Vec3,
+    mins: Vec3,
+    maxs: Vec3,
+    skip?: ReadonlySet<number>,
+    extra?: readonly CollisionBrush[],
+  ): TraceResult {
     const tr: TraceResult = {
       fraction: 1,
       endPos: vec3(),
@@ -45,14 +61,17 @@ export class CollisionWorld {
     const sy1 = Math.max(start.y, end.y) + maxs.y + 1;
     const sz1 = Math.max(start.z, end.z) + maxs.z + 1;
 
-    for (let b = 0; b < this.brushes.length; b++) {
-      const brush = this.brushes[b];
+    const count = this.brushes.length + (extra?.length ?? 0);
+    for (let b = 0; b < count; b++) {
+      const isExtra = b >= this.brushes.length;
+      if (!isExtra && skip?.has(b)) continue;
+      const brush = isExtra ? extra![b - this.brushes.length] : this.brushes[b];
       if (
         brush.mins.x > sx1 || brush.maxs.x < sx0 ||
         brush.mins.y > sy1 || brush.maxs.y < sy0 ||
         brush.mins.z > sz1 || brush.maxs.z < sz0
       ) continue;
-      traceBrush(tr, b, brush, start, end, mins, maxs);
+      traceBrush(tr, isExtra ? -2 - (b - this.brushes.length) : b, brush, start, end, mins, maxs);
       if (tr.allSolid) break;
     }
 

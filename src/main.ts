@@ -131,10 +131,14 @@ async function start() {
       world.step(commands);
       for (const e of world.events) {
         frameEvents.push(e);
-        // Respawning faces you the way the spawn point says.
+        // Respawning faces you the way the spawn point says; a portal turns you to face out of the exit.
         if (e.type === "respawn" && e.player === LOCAL_PLAYER) {
           input.yaw = me.yaw;
           input.pitch = 0;
+        }
+        if (e.type === "teleport" && e.player === LOCAL_PLAYER) {
+          input.yaw = me.yaw;
+          input.pitch = me.pitch;
         }
       }
       acc -= TICK_DT;

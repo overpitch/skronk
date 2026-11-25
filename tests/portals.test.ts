@@ -125,3 +125,93 @@ describe("portal placement", () => {
     expect(world.portals).toHaveLength(0);
   });
 });
+
+describe("walking through portals", () => {
+  type Teleport = Extract<SimEvent, { type: "teleport" }>;
+
+  /** East wall portal at y 200, west wall portal at y -150 (clear of the ramp), both at z 58. */
+  function linkedWalls() {
+    const { world, p } = setup();
+    shoot(world, p, yawToEast(200));
+    shoot(world, p, Math.atan2(-150, -512));
+    return { world, p };
+  }
+
+  /** Runs ticks with one command and returns the teleports, with the player's yaw right after each. */
+  function walk(world: World, p: PlayerState, cmd: Partial<ReturnType<typeof emptyCommand>>, ticks: number) {
+    const full = new Map([[p.id, { ...emptyCommand(), ...cmd }]]);
+    const out: { e: Teleport; yaw: number; vel: { x: number; y: number; z: number } }[] = [];
+    for (let i = 0; i < ticks; i++) {
+      world.step(full);
+      for (const e of world.events) if (e.type === "teleport") out.push({ e, yaw: p.yaw, vel: { ...p.velocity } });
+    }
+    return out;
+  }
+
+  it("walks in one wall portal and out of the other, facing out", () => {
+    const { world, p } = linkedWalls();
+    const [east, west] = world.portals;
+    place(p, 400, 200);
+    const hops = walk(world, p, { forward: 1, yaw: 0 }, 60);
+    expect(hops).toHaveLength(1);
+    expect(hops[0].e.from).toBe(east.id);
+    expect(hops[0].e.to).toBe(west.id);
+    expect(hops[0].yaw).toBeCloseTo(0); // out of the west wall is +x again
+    expect(hops[0].vel.x).toBeGreaterThan(200);
+    // Carried on walking into the room from the west wall, level with the exit.
+    expect(p.origin.x).toBeGreaterThan(-512 + 16);
+    expect(p.origin.y).toBeCloseTo(-150, 0);
+    expect(p.onGround).toBe(true);
+  });
+
+  it("turns you round when both portals face the same way", () => {
+    const { world, p } = setup();
+    shoot(world, p, yawToEast(250));
+    shoot(world, p, yawToEast(-50));
+    place(p, 400, 250);
+    // The fixed test command keeps walking +x, so stop soon after the first hop.
+    const hops = walk(world, p, { forward: 1, yaw: 0 }, 30);
+    expect(hops.length).toBeGreaterThanOrEqual(1);
+    expect(Math.abs(hops[0].yaw)).toBeCloseTo(Math.PI); // came back out of the east wall facing west
+    expect(hops[0].vel.x).toBeLessThan(-200);
+  });
+
+  it("keeps the wall solid until the pair is linked", () => {
+    const { world, p } = setup();
+    shoot(world, p, yawToEast(200));
+    place(p, 400, 200);
+    expect(walk(world, p, { forward: 1, yaw: 0 }, 60)).toHaveLength(0);
+    expect(p.origin.x).toBeLessThanOrEqual(EAST_X - 16 + 0.1);
+  });
+
+  it("keeps the wall solid beside the opening", () => {
+    const { world, p } = linkedWalls();
+    place(p, 400, 200 + PORTAL.halfWidth + 20);
+    expect(walk(world, p, { forward: 1, yaw: 0 }, 60)).toHaveLength(0);
+    expect(p.origin.x).toBeLessThanOrEqual(EAST_X - 16 + 0.1);
+  });
+
+  it("drops through a floor portal and flies out of a wall", () => {
+    const { world, p } = setup();
+    shoot(world, p, 0); // east wall, y 0
+    // Stand on the floor pad (top at z 2) and shoot the floor at your feet.
+    set(p.origin, -416, -416, FLOOR_Z + 2);
+    set(p.prevOrigin, -416, -416, FLOOR_Z + 2);
+    const shot = shoot(world, p, 0, -1.5);
+    expect(shot.portal).not.toBeNull();
+    expect(world.portals[1].normal.z).toBeCloseTo(1);
+    const hops = walk(world, p, {}, 60);
+    expect(hops.length).toBeGreaterThanOrEqual(1);
+    // Falling speed comes out sideways, out of the east wall, facing out of it.
+    expect(hops[0].vel.x).toBeLessThan(-150);
+    expect(Math.abs(hops[0].yaw)).toBeCloseTo(Math.PI);
+  });
+
+  it("removes the opening when a portal is replaced", () => {
+    const { world, p } = linkedWalls();
+    shoot(world, p, yawToEast(-100)); // replaces the east portal at y 200
+    place(p, 400, 200);
+    expect(walk(world, p, { forward: 1, yaw: 0 }, 60)).toHaveLength(0);
+    expect(p.origin.x).toBeLessThanOrEqual(EAST_X - 16 + 0.1);
+  });
+});

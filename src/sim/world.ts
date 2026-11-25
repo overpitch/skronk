@@ -3,13 +3,25 @@
  * from player commands. No rendering, DOM or network code belongs here.
  */
 import { add, clone, copy, normalize, scale, vec3, type Vec3 } from "../math/vec3";
-import type { LevelData, SpawnPoint } from "../level/types";
-import { CollisionWorld } from "./collision";
+import type { CollisionBrush, LevelData, SpawnPoint } from "../level/types";
+import { CollisionWorld, type Tracer } from "./collision";
 import { emptyCommand, type PlayerCommand } from "./command";
 import type { PlayerId, SimEvent } from "./events";
 import { EYE_HEIGHT, PLAYER_MAXS, PLAYER_MINS, playerMove, type MoveState } from "./movement";
 import { applyPickup, createPickups, PICKUP_HALF_SIZE, type PickupState } from "./pickups";
-import { playerPortalOwner, PORTAL, shootPortal, type Portal, type PortalOwner } from "./portals";
+import {
+  buildPassage,
+  exitOrigin,
+  nearOpening,
+  playerPortalOwner,
+  PORTAL,
+  portalLocal,
+  shootPortal,
+  throughPortalDir,
+  type Portal,
+  type PortalOwner,
+  type PortalPassage,
+} from "./portals";
 import { TICK_DT } from "./tick";
 import { segmentVsBox, viewDirection, VITALS, WEAPON, type Projectile } from "./weapon";
 
@@ -19,6 +31,9 @@ export type { PlayerId } from "./events";
 /** Anything below this is treated as fallen out of the world. */
 const KILL_Z_MARGIN = 2048;
 const POINT: Readonly<Vec3> = Object.freeze(vec3());
+/** Speed cap when coming out of a portal, so falling between a floor and ceiling pair can't run away. */
+const MAX_PORTAL_EXIT_SPEED = 2400;
+const PITCH_LIMIT = (89 * Math.PI) / 180;
 
 export interface PlayerState extends MoveState {
   id: PlayerId;
@@ -56,6 +71,8 @@ export class World {
   private spawnCursor = 0;
   private nextProjectileId = 1;
   private nextPortalId = 1;
+  /** Collision changes for walking through each portal, by portal id. */
+  private passages = new Map<number, PortalPassage>();
 
   constructor(readonly level: LevelData) {
     this.collision = new CollisionWorld(level.brushes);
@@ -138,7 +155,10 @@ export class World {
       const cmd = commands.get(p.id) ?? { ...emptyCommand(), yaw: p.yaw, pitch: p.pitch };
       p.yaw = cmd.yaw;
       p.pitch = cmd.pitch;
-      playerMove(this.collision, p, cmd, TICK_DT);
+      const open = this.openPortalsNear(p.origin);
+      const before = clone(p.origin);
+      playerMove(this.tracerThrough(open), p, cmd, TICK_DT);
+      this.passThroughPortals(p, open, before);
       if (p.origin.z < killZ) {
         this.kill(p, null);
         continue;
@@ -200,6 +220,7 @@ export class World {
       if (oldest) this.removePortals((pt) => pt === oldest);
       placed = { ...shot.placement, id: this.nextPortalId++, owner, placedTick: this.tick };
       this.portals.push(placed);
+      this.passages.set(placed.id, buildPassage(this.level, placed));
     }
     this.events.push({
       type: "portalShot",
@@ -215,8 +236,75 @@ export class World {
 
   private removePortals(match: (p: Portal) => boolean) {
     let kept = 0;
-    for (const pt of this.portals) if (!match(pt)) this.portals[kept++] = pt;
+    for (const pt of this.portals) {
+      if (match(pt)) this.passages.delete(pt.id);
+      else this.portals[kept++] = pt;
+    }
     this.portals.length = kept;
+  }
+
+  /** Linked portals a player box at this origin is close enough to step into. */
+  private openPortalsNear(origin: Vec3): Portal[] {
+    return this.portals.filter((pt) => nearOpening(origin, PLAYER_MINS, PLAYER_MAXS, pt) && this.linkedPortal(pt) !== null);
+  }
+
+  /** The world as movement sees it with these portals open: their walls gone, tunnels behind them instead. */
+  private tracerThrough(open: readonly Portal[]): Tracer {
+    if (open.length === 0) return this.collision;
+    const skip = new Set<number>();
+    const extra: CollisionBrush[] = [];
+    for (const pt of open) {
+      const passage = this.passages.get(pt.id)!;
+      for (const b of passage.backing) skip.add(b);
+      extra.push(...passage.frame);
+    }
+    const world = this.collision;
+    return { traceBox: (start, end, mins, maxs) => world.traceBox(start, end, mins, maxs, skip, extra) };
+  }
+
+  /** If the player's centre crossed an open portal this tick, carry them out of its partner. */
+  private passThroughPortals(p: PlayerState, open: readonly Portal[], before: Vec3) {
+    const offset = vec3(0, 0, (PLAYER_MINS.z + PLAYER_MAXS.z) / 2);
+    for (const from of open) {
+      const was = portalLocal(add(before, offset), from);
+      const now = portalLocal(add(p.origin, offset), from);
+      if (was.n < 0 || now.n >= 0) continue;
+      if (Math.abs(now.r) > PORTAL.halfWidth || Math.abs(now.u) > PORTAL.halfHeight) continue;
+      const to = this.linkedPortal(from);
+      if (!to) continue;
+
+      const dest = exitOrigin(p.origin, PLAYER_MINS, PLAYER_MAXS, from, to);
+      // Something solid right in front of the exit: stay put rather than end up inside it.
+      if (this.tracerThrough([to]).traceBox(dest, dest, PLAYER_MINS, PLAYER_MAXS).startSolid) return;
+
+      copy(p.origin, dest);
+      copy(p.prevOrigin, dest);
+      throughPortalDir(p.velocity, from, to, p.velocity);
+      const speed = Math.hypot(p.velocity.x, p.velocity.y, p.velocity.z);
+      if (speed > MAX_PORTAL_EXIT_SPEED) scale(p.velocity, MAX_PORTAL_EXIT_SPEED / speed, p.velocity);
+      p.onGround = false;
+      this.turnThrough(p, from, to);
+      this.events.push({ type: "teleport", player: p.id, from: from.id, to: to.id });
+      return;
+    }
+  }
+
+  /** Turns the view to match the exit. Facing straight up or down out of a floor or ceiling, keep a sensible heading. */
+  private turnThrough(p: PlayerState, from: Portal, to: Portal) {
+    const look = throughPortalDir(viewDirection(p.yaw, p.pitch, vec3()), from, to);
+    const heading = throughPortalDir(vec3(Math.cos(p.yaw), Math.sin(p.yaw), 0), from, to);
+    let hx = heading.x;
+    let hy = heading.y;
+    if (Math.hypot(hx, hy) < 0.3) {
+      // Heading turned vertical (floor portal into a wall, say): face out of a wall exit,
+      // or towards the top edge of a floor or ceiling exit.
+      const out = Math.hypot(to.normal.x, to.normal.y) >= 0.3 ? to.normal : to.up;
+      hx = out.x;
+      hy = out.y;
+      if (Math.hypot(hx, hy) < 0.3) [hx, hy] = [Math.cos(p.yaw), Math.sin(p.yaw)];
+    }
+    p.yaw = Math.atan2(hy, hx);
+    p.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, Math.asin(Math.max(-1, Math.min(1, look.z)))));
   }
 
   /** Moves every projectile one tick; the first thing it touches, wall or player, stops it. */

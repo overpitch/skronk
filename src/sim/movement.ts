@@ -4,7 +4,7 @@
  * and automatic stair stepping. All speeds are map units per second.
  */
 import { add, addScaled, copy, cross, dot, set, vec3, type Vec3 } from "../math/vec3";
-import type { CollisionWorld } from "./collision";
+import type { Tracer } from "./collision";
 import type { PlayerCommand } from "./command";
 
 export const MOVE = {
@@ -47,7 +47,7 @@ function clipVelocity(inVel: Vec3, normal: Vec3, out: Vec3, overbounce: number) 
 }
 
 /** Move along velocity for dt, sliding along anything hit. */
-function slideMove(world: CollisionWorld, s: MoveState, dt: number) {
+function slideMove(world: Tracer, s: MoveState, dt: number) {
   const original = vec3(s.velocity.x, s.velocity.y, s.velocity.z);
   const primal = vec3(s.velocity.x, s.velocity.y, s.velocity.z);
   const planes: Vec3[] = [];
@@ -102,7 +102,7 @@ function slideMove(world: CollisionWorld, s: MoveState, dt: number) {
 }
 
 /** Ground movement: try a plain slide, and a slide lifted by a stair height; keep whichever goes further. */
-function groundMove(world: CollisionWorld, s: MoveState, dt: number) {
+function groundMove(world: Tracer, s: MoveState, dt: number) {
   s.velocity.z = 0;
   if (s.velocity.x === 0 && s.velocity.y === 0) return;
 
@@ -144,7 +144,7 @@ function groundMove(world: CollisionWorld, s: MoveState, dt: number) {
   s.velocity.z = downVel.z;
 }
 
-function categorizePosition(world: CollisionWorld, s: MoveState) {
+function categorizePosition(world: Tracer, s: MoveState) {
   if (s.velocity.z > 180) {
     s.onGround = false;
     return;
@@ -196,7 +196,7 @@ function airAccelerate(s: MoveState, wishDir: Vec3, wishSpeed: number, dt: numbe
  * Walking down stairs or a ramp would otherwise leave the ground every tick and
  * fall in tiny hops. Snap down by up to a stair height if there's floor there.
  */
-function stickToGround(world: CollisionWorld, s: MoveState) {
+function stickToGround(world: Tracer, s: MoveState) {
   const down = vec3(s.origin.x, s.origin.y, s.origin.z - MOVE.stepHeight);
   const tr = world.traceBox(s.origin, down, PLAYER_MINS, PLAYER_MAXS);
   if (tr.startSolid || tr.allSolid || !tr.plane || tr.fraction === 0) return;
@@ -205,7 +205,7 @@ function stickToGround(world: CollisionWorld, s: MoveState) {
 }
 
 /** Advance one player by one tick. Mutates `s`. */
-export function playerMove(world: CollisionWorld, s: MoveState, cmd: PlayerCommand, dt: number) {
+export function playerMove(world: Tracer, s: MoveState, cmd: PlayerCommand, dt: number) {
   categorizePosition(world, s);
 
   if (cmd.jump && s.onGround) {

@@ -62,6 +62,12 @@ export class Sfx {
         case "respawn":
           if (e.player === localId) this.tone("sine", 300, 600, 0.25, 0.2);
           break;
+        case "teleport":
+          if (e.player === localId) {
+            this.tone("sine", 600, 160, 0.22, 0.22);
+            this.tone("triangle", 1400, 500, 0.15, 0.06);
+          }
+          break;
         case "portalShot":
           if (e.player !== localId) break;
           if (e.portal !== null) {
