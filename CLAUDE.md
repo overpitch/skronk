@@ -13,6 +13,8 @@ Browser arena shooter with personal portals. Full brief: [docs/brief.md](docs/br
 
 Live build: https://overpitch.github.io/skronk/ (every push to `main` runs tests, builds and deploys via `.github/workflows/deploy.yml`).
 
+Test in desktop Chrome only (the built-in browser pane is Chromium too). Safari is not a test target. The Xbox browser is Edge, also Chromium, so Chrome is the closest stand-in.
+
 Load a map with `?map=<name>` (file in `public/assets/maps/<name>.map`). Default: `test_box`.
 Practice targets: `?dummies=N` (default 1, 0 for none); add `?dummyfire` to make them shoot back, `?dummyspeed=0..1` for strafe speed (default 0.35, 0 stands still).
 
