@@ -260,6 +260,10 @@ export class GameRenderer {
           if (e.player === localId) this.punchPitch += 0.003;
           break;
         }
+        case "shotThroughPortal":
+          // The tracer starts fresh out of the exit: no offset, tail grows from the exit.
+          this.tracerOffsets.set(e.projectile, { offset: new THREE.Vector3(), born: now });
+          break;
         case "fire":
           if (e.player !== localId) break;
           this.viewModel.fire();

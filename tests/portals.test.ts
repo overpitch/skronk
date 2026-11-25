@@ -264,3 +264,60 @@ describe("portal ends", () => {
     expect(world.nextPortalSlot(owner)).toBe(1);
   });
 });
+
+describe("shooting through portals", () => {
+  /** East wall portal at y 200 and west wall portal at y -150, both centred at z 58. */
+  function linked() {
+    const { world, p } = setup();
+    shoot(world, p, yawToEast(200));
+    shoot(world, p, Math.atan2(-150, -512));
+    return { world, p };
+  }
+
+  function fireOnce(world: World, p: PlayerState, yaw: number, ticks = 30) {
+    const events: SimEvent[] = [];
+    world.step(new Map([[p.id, { ...emptyCommand(), yaw, fire: true }]]));
+    events.push(...world.events);
+    for (let i = 0; i < ticks; i++) {
+      world.step(new Map([[p.id, { ...emptyCommand(), yaw }]]));
+      events.push(...world.events);
+    }
+    return events;
+  }
+
+  it("goes in one portal and out of the other, and can hit you in the back", () => {
+    const { world, p } = linked();
+    // From (0, 25) aim level at the east portal: out of the west one, the shot runs back through here.
+    place(p, 0, 25);
+    const events = fireOnce(world, p, Math.atan2(175, 512));
+    const hop = events.find((e) => e.type === "shotThroughPortal");
+    expect(hop).toBeDefined();
+    if (hop?.type !== "shotThroughPortal") return;
+    expect(hop.exit.x).toBeCloseTo(-512, 0);
+    expect(hop.exit.y).toBeCloseTo(-150, 0);
+    const hit = events.find((e) => e.type === "hit");
+    expect(hit?.type === "hit" && hit.victim === p.id && hit.attacker === p.id).toBe(true);
+    expect(p.health).toBeLessThan(100);
+  });
+
+  it("hits another player on the far side", () => {
+    const { world, p } = linked();
+    const other = world.addPlayer(2);
+    place(p, 0, 25);
+    // On the exit path, out of the west portal heading (512, 175).
+    place(other, -400, -150 + (175 / 512) * 112);
+    const events = fireOnce(world, p, Math.atan2(175, 512));
+    const hit = events.find((e) => e.type === "hit");
+    expect(hit?.type === "hit" && hit.victim === other.id).toBe(true);
+  });
+
+  it("hits the wall when the portal isn't linked", () => {
+    const { world, p } = setup();
+    shoot(world, p, yawToEast(200));
+    place(p, 0, 25);
+    const events = fireOnce(world, p, Math.atan2(175, 512));
+    expect(events.some((e) => e.type === "shotThroughPortal")).toBe(false);
+    const impact = events.find((e) => e.type === "impact");
+    expect(impact?.type === "impact" && Math.round(impact.pos.x)).toBe(512);
+  });
+});

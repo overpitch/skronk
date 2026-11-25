@@ -12,6 +12,8 @@ import { applyPickup, createPickups, PICKUP_HALF_SIZE, type PickupState } from "
 import {
   buildPassage,
   exitOrigin,
+  segmentIntoPortal,
+  throughPortalPoint,
   PASSAGE_DEPTH,
   nearOpening,
   playerPortalOwner,
@@ -35,6 +37,8 @@ const KILL_Z_MARGIN = 2048;
 const POINT: Readonly<Vec3> = Object.freeze(vec3());
 /** Speed cap when coming out of a portal, so falling between a floor and ceiling pair can't run away. */
 const MAX_PORTAL_EXIT_SPEED = 2400;
+/** A shot between two facing portals could loop forever; it stops after this many hops in one tick. */
+const MAX_SHOT_HOPS_PER_TICK = 4;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
 
 export interface PlayerState extends MoveState {
@@ -203,6 +207,7 @@ export class World {
       prevOrigin: clone(eye),
       velocity: scale(dir, WEAPON.projectileSpeed),
       expireTick: this.tick + WEAPON.projectileLifeTicks,
+      hops: 0,
     };
     this.projectiles.push(projectile);
     this.events.push({ type: "fire", player: p.id, projectile: projectile.id, origin: clone(eye), dir });
@@ -382,37 +387,71 @@ export class World {
 
     for (const pr of this.projectiles) {
       copy(pr.prevOrigin, pr.origin);
-      scale(pr.velocity, TICK_DT, delta);
-      add(pr.origin, delta, end);
+      // Fraction of this tick's travel still to go; a portal hop spends part of it.
+      let left = 1;
+      let done = false;
+      for (let hop = 0; hop <= MAX_SHOT_HOPS_PER_TICK && !done; hop++) {
+        scale(pr.velocity, TICK_DT * left, delta);
+        add(pr.origin, delta, end);
 
-      const tr = this.collision.traceBox(pr.origin, end, POINT, POINT);
-      const wallT = tr.startSolid ? 0 : tr.fraction;
-      let hitT = wallT;
-      let victim: PlayerState | null = null;
-      for (const p of this.players.values()) {
-        if (p.id === pr.owner || !p.alive) continue;
-        add(p.origin, PLAYER_MINS, boxMin);
-        add(p.origin, PLAYER_MAXS, boxMax);
-        boxMin.x -= r; boxMin.y -= r; boxMin.z -= r;
-        boxMax.x += r; boxMax.y += r; boxMax.z += r;
-        const t = segmentVsBox(pr.origin, delta, boxMin, boxMax);
-        if (t >= 0 && t <= hitT) {
-          hitT = t;
-          victim = p;
+        const tr = this.collision.traceBox(pr.origin, end, POINT, POINT);
+        const wallT = tr.startSolid ? 0 : tr.fraction;
+        let hitT = wallT;
+        let victim: PlayerState | null = null;
+        for (const p of this.players.values()) {
+          if ((p.id === pr.owner && pr.hops === 0) || !p.alive) continue;
+          add(p.origin, PLAYER_MINS, boxMin);
+          add(p.origin, PLAYER_MAXS, boxMax);
+          boxMin.x -= r; boxMin.y -= r; boxMin.z -= r;
+          boxMax.x += r; boxMax.y += r; boxMax.z += r;
+          const t = segmentVsBox(pr.origin, delta, boxMin, boxMax);
+          if (t >= 0 && t <= hitT) {
+            hitT = t;
+            victim = p;
+          }
+        }
+
+        // A linked portal opening reached before anything else? The wall behind it is
+        // hit at the same spot (the trace stops a hair short), so allow a quarter unit of slack.
+        let portalT = Infinity;
+        let from: Portal | null = null;
+        let to: Portal | null = null;
+        const slack = 0.25 / Math.max(1e-6, Math.hypot(delta.x, delta.y, delta.z));
+        for (const pt of this.portals) {
+          const t = segmentIntoPortal(pr.origin, delta, pt);
+          if (t === null || t >= portalT || t > hitT + slack || (victim && t >= hitT)) continue;
+          const partner = this.linkedPortal(pt);
+          if (!partner) continue;
+          portalT = t;
+          from = pt;
+          to = partner;
+        }
+
+        if (from && to) {
+          const pos = addScaled(pr.origin, delta, portalT);
+          const exit = addScaled(throughPortalPoint(pos, from, to), to.normal, 0.01);
+          copy(pr.origin, exit);
+          copy(pr.prevOrigin, exit); // don't draw the tracer across the map
+          throughPortalDir(pr.velocity, from, to, pr.velocity);
+          pr.hops++;
+          left *= 1 - portalT;
+          this.events.push({ type: "shotThroughPortal", projectile: pr.id, from: from.id, to: to.id, pos, exit: clone(exit) });
+          continue;
+        }
+
+        done = true;
+        if (victim) {
+          const pos = vec3(pr.origin.x + delta.x * hitT, pr.origin.y + delta.y * hitT, pr.origin.z + delta.z * hitT);
+          this.damage(victim, pr.owner, WEAPON.damage, pos, pr);
+          pr.expireTick = -1;
+        } else if (wallT < 1) {
+          this.events.push({ type: "impact", projectile: pr.id, owner: pr.owner, pos: clone(tr.endPos), normal: clone(tr.normal) });
+          pr.expireTick = -1;
+        } else {
+          copy(pr.origin, end);
         }
       }
-
-      if (victim) {
-        const pos = vec3(pr.origin.x + delta.x * hitT, pr.origin.y + delta.y * hitT, pr.origin.z + delta.z * hitT);
-        this.damage(victim, pr.owner, WEAPON.damage, pos, pr);
-        continue;
-      }
-      if (wallT < 1) {
-        this.events.push({ type: "impact", projectile: pr.id, owner: pr.owner, pos: clone(tr.endPos), normal: clone(tr.normal) });
-        continue;
-      }
       if (this.tick >= pr.expireTick) continue;
-      copy(pr.origin, end);
       this.projectiles[kept++] = pr;
     }
     this.projectiles.length = kept;

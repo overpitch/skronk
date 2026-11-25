@@ -38,6 +38,8 @@ export interface Projectile {
   prevOrigin: Vec3;
   velocity: Vec3;
   expireTick: number;
+  /** Portals passed through. After the first, the shot can hit whoever fired it. */
+  hops: number;
 }
 
 /** Unit vector for yaw (0 = +X, counter-clockwise) and pitch (positive = up). */

@@ -309,6 +309,21 @@ export function nearOpening(origin: Vec3, mins: Vec3, maxs: Vec3, p: Placement):
   return c.n >= -depth && c.n <= PASSAGE_REACH && Math.abs(c.r) <= PORTAL.halfWidth && Math.abs(c.u) <= PORTAL.halfHeight;
 }
 
+/**
+ * Where a segment (start + t * delta, t in 0..1) goes into a portal's opening from
+ * the front, or null if it misses. The opening is the ellipse, not its bounding box.
+ */
+export function segmentIntoPortal(start: Vec3, delta: Vec3, p: Placement): number | null {
+  const n0 = dot(sub(start, p.origin), p.normal);
+  const n1 = n0 + dot(delta, p.normal);
+  if (n0 < 0 || n1 >= 0) return null;
+  const t = n0 / (n0 - n1);
+  const at = sub(addScaled(start, delta, t), p.origin);
+  const r = dot(at, p.right) / PORTAL.halfWidth;
+  const u = dot(at, p.up) / PORTAL.halfHeight;
+  return r * r + u * u <= 1 ? t : null;
+}
+
 /** Carries a direction in through `from` and out of `to`: in becomes out, and left stays on your left. */
 export function throughPortalDir(v: Vec3, from: Placement, to: Placement, out: Vec3 = vec3()): Vec3 {
   const r = dot(v, from.right);

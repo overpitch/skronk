@@ -10,6 +10,8 @@ export type SimEvent =
   | { type: "fire"; player: PlayerId; projectile: number; origin: Vec3; dir: Vec3 }
   | { type: "dryFire"; player: PlayerId }
   /** A projectile hit level geometry. */
+  /** A shot went into portal `from` at `pos` and came out of `to` at `exit`. */
+  | { type: "shotThroughPortal"; projectile: number; from: number; to: number; pos: Vec3; exit: Vec3 }
   | { type: "impact"; projectile: number; owner: PlayerId; pos: Vec3; normal: Vec3 }
   /** A projectile hit a player. `damage` is before armor. */
   | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; damage: number; pos: Vec3 }
