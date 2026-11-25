@@ -49,16 +49,15 @@ describe("brush geometry", () => {
     }
   });
 
-  it("loads the test map with spawns, pickups and a portal wall", () => {
+  it("loads the test map with spawns, pickups and two portal walls", () => {
     const level = loadTestMap();
     expect(level.brushes.length).toBe(14);
     expect(level.spawns).toHaveLength(4);
     expect(level.spawns[0].yaw).toBeCloseTo(Math.PI / 2);
     expect(level.pickups.map((p) => p.kind).sort()).toEqual(["ammo", "armor", "health"]);
     const portal = level.surfaces.filter((s) => s.portalFriendly);
-    expect(portal).toHaveLength(1);
-    expect(portal[0].plane.normal).toEqual({ x: -1, y: 0, z: 0 });
-    expect(portal[0].texture).toBe("base/portal_panel");
+    expect(portal.map((s) => s.plane.normal.x).sort()).toEqual([-1, 1]);
+    for (const s of portal) expect(s.texture).toBe("base/portal_panel");
     // The ramp wedge has five faces.
     const slope = level.surfaces.find((s) => s.plane.normal.z > 0.5 && s.plane.normal.z < 0.99)!;
     expect(slope.vertices).toHaveLength(4);

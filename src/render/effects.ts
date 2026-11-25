@@ -11,6 +11,8 @@ const MAX_SPARKS = 512;
 const MAX_DECALS = 96;
 const SPARK_GRAVITY = 800;
 const FLASH_SECONDS = 0.06;
+const MAX_BEAMS = 8;
+const BEAM_SECONDS = 0.16;
 
 /** Soft round glow/scorch sprites drawn on a canvas, so there are no image assets. */
 function radialTexture(inner: string, outer: string): THREE.CanvasTexture {
@@ -45,6 +47,10 @@ export class Effects {
 
   private decals: THREE.Mesh[] = [];
   private decalCursor = 0;
+
+  /** Portal shot beams: a short-lived coloured line from gun to wall. */
+  private beams: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; life: number }[] = [];
+  private beamCursor = 0;
 
   private tmpDir = new THREE.Vector3();
   private static readonly X = new THREE.Vector3(1, 0, 0);
@@ -94,6 +100,15 @@ export class Effects {
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -2,
     });
+    for (let i = 0; i < MAX_BEAMS; i++) {
+      const mat = new THREE.MeshBasicMaterial({ blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
+      const mesh = new THREE.Mesh(tracerGeo, mat);
+      mesh.visible = false;
+      mesh.frustumCulled = false;
+      scene.add(mesh);
+      this.beams.push({ mesh, mat, life: 0 });
+    }
+
     for (let i = 0; i < MAX_DECALS; i++) {
       const m = new THREE.Mesh(decalGeo, decalMat);
       m.visible = false;
@@ -125,6 +140,29 @@ export class Effects {
     this.burst(pos, this.tmpDir, 14, [1, 0.35, 0.3], 260);
   }
 
+  /** A portal shot: a bright line that fades out quickly. */
+  beam(from: THREE.Vector3, to: THREE.Vector3, color: THREE.ColorRepresentation) {
+    const b = this.beams[this.beamCursor];
+    this.beamCursor = (this.beamCursor + 1) % MAX_BEAMS;
+    this.tmpDir.copy(to).sub(from);
+    const len = this.tmpDir.length();
+    if (len < 1) return;
+    this.tmpDir.divideScalar(len);
+    b.mesh.quaternion.setFromUnitVectors(Effects.X, this.tmpDir);
+    b.mesh.scale.set(len, 1.6, 1.6);
+    b.mesh.position.copy(from).lerp(to, 0.5);
+    b.mat.color.set(color);
+    b.mat.opacity = 1;
+    b.life = BEAM_SECONDS;
+    b.mesh.visible = true;
+  }
+
+  /** A burst of coloured sparks off a surface (portal opening, or a fizzle in grey). */
+  splash(pos: THREE.Vector3, normal: THREE.Vector3, color: THREE.ColorRepresentation, count: number) {
+    const c = new THREE.Color(color);
+    this.burst(pos, normal, count, [c.r, c.g, c.b], 240);
+  }
+
   private burst(pos: THREE.Vector3, normal: THREE.Vector3, count: number, color: [number, number, number], speed: number) {
     for (let n = 0; n < count; n++) {
       const i = this.sparkCursor;
@@ -143,6 +181,12 @@ export class Effects {
   /** Per frame: draw tracers at the given positions and age sparks and the flash. */
   update(dt: number, tracers: { head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[]) {
     this.flashTime = Math.max(0, this.flashTime - dt);
+    for (const b of this.beams) {
+      if (b.life <= 0) continue;
+      b.life -= dt;
+      b.mat.opacity = Math.max(0, b.life / BEAM_SECONDS);
+      if (b.life <= 0) b.mesh.visible = false;
+    }
     this.muzzleLight.intensity = this.flashTime > 0 ? 3.5 * (this.flashTime / FLASH_SECONDS) : 0;
 
     for (let i = 0; i < MAX_TRACERS; i++) {

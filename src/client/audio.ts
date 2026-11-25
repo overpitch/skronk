@@ -62,6 +62,16 @@ export class Sfx {
         case "respawn":
           if (e.player === localId) this.tone("sine", 300, 600, 0.25, 0.2);
           break;
+        case "portalShot":
+          if (e.player !== localId) break;
+          if (e.portal !== null) {
+            // A rising whoosh as it opens.
+            this.tone("sine", 180, 520, 0.2, 0.28);
+            this.tone("triangle", 700, 1500, 0.12, 0.07, 0.03);
+          } else {
+            this.tone("square", 320, 110, 0.12, 0.08);
+          }
+          break;
       }
     }
   }

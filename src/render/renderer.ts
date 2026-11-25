@@ -10,6 +10,8 @@ import { MOVE } from "../sim/movement";
 import type { World } from "../sim/world";
 import { Effects } from "./effects";
 import { PlayerModels } from "./players";
+import { PortalViews } from "./portals";
+import { playerPortalOwner, type PortalOwner } from "../sim/portals";
 import { TextureLibrary } from "./textures";
 import { ViewModel } from "./viewmodel";
 
@@ -17,6 +19,10 @@ const HORIZONTAL_FOV_DEG = 100;
 /** How long a local shot's tracer takes to slide from the gun muzzle onto its true path. */
 const TRACER_CONVERGE_SECONDS = 0.09;
 const PUNCH_RECOVERY = 12; // per second
+/** Your portals, and everyone else's (team colours come with team modes). */
+const MY_PORTAL_COLOR = 0x2fe0c8;
+const OTHER_PORTAL_COLOR = 0xc060ff;
+const FIZZLE_COLOR = 0x8a8a8a;
 
 export interface RenderFrame {
   world: World;
@@ -39,6 +45,7 @@ export class GameRenderer {
   private effects: Effects;
   private players: PlayerModels;
   private viewModel = new ViewModel();
+  private portals: PortalViews;
   private pickupMeshes: THREE.Mesh[] = [];
   /** Local shots: offset from true path to the gun muzzle at the moment of firing. */
   private tracerOffsets = new Map<number, { offset: THREE.Vector3; born: number }>();
@@ -65,6 +72,7 @@ export class GameRenderer {
     this.textures = new TextureLibrary(textureRoot, this.renderer.capabilities.getMaxAnisotropy());
     this.effects = new Effects(this.scene);
     this.players = new PlayerModels(this.scene);
+    this.portals = new PortalViews(this.scene);
     this.resize();
   }
 
@@ -153,7 +161,10 @@ export class GameRenderer {
     this.right.set(Math.sin(frame.yaw), -Math.cos(frame.yaw), 0);
     this.up.crossVectors(this.right, this.forward);
 
-    this.handleEvents(events, localId, timeSeconds);
+    const myOwner = playerPortalOwner(localId);
+    const portalColor = (owner: PortalOwner) => (owner === myOwner ? MY_PORTAL_COLOR : OTHER_PORTAL_COLOR);
+    this.handleEvents(events, localId, timeSeconds, portalColor);
+    this.portals.update(world.portals, (p) => world.linkedPortal(p) !== null, (p) => portalColor(p.owner), timeSeconds);
 
     // Other players, interpolated between ticks.
     const others = [...world.players.values()].filter((p) => p.id !== localId);
@@ -216,9 +227,24 @@ export class GameRenderer {
       .addScaledVector(this.up, -6);
   }
 
-  private handleEvents(events: readonly SimEvent[], localId: PlayerId, now: number) {
+  private handleEvents(
+    events: readonly SimEvent[],
+    localId: PlayerId,
+    now: number,
+    portalColor: (owner: PortalOwner) => THREE.ColorRepresentation,
+  ) {
     for (const e of events) {
       switch (e.type) {
+        case "portalShot": {
+          const from = e.player === localId ? this.muzzle(this.v1) : this.v1.set(e.origin.x, e.origin.y, e.origin.z);
+          const to = this.v2.set(e.end.x, e.end.y, e.end.z);
+          const color = e.portal === null ? FIZZLE_COLOR : portalColor(e.owner);
+          this.effects.beam(from, to, color);
+          const normal = new THREE.Vector3(e.normal.x, e.normal.y, e.normal.z);
+          if (normal.lengthSq() > 0) this.effects.splash(to, normal, color, e.portal === null ? 10 : 28);
+          if (e.player === localId) this.punchPitch += 0.003;
+          break;
+        }
         case "fire":
           if (e.player !== localId) break;
           this.viewModel.fire();

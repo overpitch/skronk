@@ -16,4 +16,10 @@ export type SimEvent =
   /** attacker is null for deaths with no killer, like falling out of the world. */
   | { type: "kill"; attacker: PlayerId | null; victim: PlayerId }
   | { type: "respawn"; player: PlayerId }
-  | { type: "pickup"; player: PlayerId; kind: string; index: number };
+  | { type: "pickup"; player: PlayerId; kind: string; index: number }
+  /**
+   * A portal shot. `portal` is the id of the portal it placed, or null if it
+   * fizzled (normal is zero if it hit nothing in range). `replaced` is the id
+   * of the owner's portal it took the place of, if any.
+   */
+  | { type: "portalShot"; player: PlayerId; owner: string; origin: Vec3; end: Vec3; normal: Vec3; portal: number | null; replaced: number | null };

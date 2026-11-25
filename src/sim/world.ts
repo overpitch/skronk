@@ -9,6 +9,7 @@ import { emptyCommand, type PlayerCommand } from "./command";
 import type { PlayerId, SimEvent } from "./events";
 import { EYE_HEIGHT, PLAYER_MAXS, PLAYER_MINS, playerMove, type MoveState } from "./movement";
 import { applyPickup, createPickups, PICKUP_HALF_SIZE, type PickupState } from "./pickups";
+import { playerPortalOwner, PORTAL, shootPortal, type Portal, type PortalOwner } from "./portals";
 import { TICK_DT } from "./tick";
 import { segmentVsBox, viewDirection, VITALS, WEAPON, type Projectile } from "./weapon";
 
@@ -36,6 +37,10 @@ export interface PlayerState extends MoveState {
   respawnTick: number;
   frags: number;
   deaths: number;
+  /** Ticks until another portal shot is allowed. */
+  portalCooldown: number;
+  /** Portal trigger state last tick: a shot needs a fresh press. */
+  portalHeld: boolean;
 }
 
 export class World {
@@ -43,11 +48,14 @@ export class World {
   readonly players = new Map<PlayerId, PlayerState>();
   readonly projectiles: Projectile[] = [];
   readonly pickups: PickupState[];
+  /** Every placed portal, all owners. At most two per owner. */
+  readonly portals: Portal[] = [];
   /** What happened during the last step(). Replaced every tick. */
   events: SimEvent[] = [];
   tick = 0;
   private spawnCursor = 0;
   private nextProjectileId = 1;
+  private nextPortalId = 1;
 
   constructor(readonly level: LevelData) {
     this.collision = new CollisionWorld(level.brushes);
@@ -73,6 +81,8 @@ export class World {
       respawnTick: 0,
       frags: 0,
       deaths: 0,
+      portalCooldown: 0,
+      portalHeld: false,
     };
     this.players.set(id, p);
     this.respawn(p);
@@ -80,7 +90,22 @@ export class World {
   }
 
   removePlayer(id: PlayerId) {
+    const p = this.players.get(id);
+    if (!p) return;
     this.players.delete(id);
+    // A player's own portals leave with them (team-owned ones won't, later).
+    const owner = playerPortalOwner(id);
+    this.removePortals((pt) => pt.owner === owner);
+  }
+
+  /** Whose portal pair this player places into. Team modes can map players to a team key here. */
+  portalOwnerOf(p: PlayerState): PortalOwner {
+    return playerPortalOwner(p.id);
+  }
+
+  /** The other end of a portal's pair, or null while it is the only one. */
+  linkedPortal(portal: Portal): Portal | null {
+    return this.portals.find((o) => o.owner === portal.owner && o !== portal) ?? null;
   }
 
   respawn(p: PlayerState) {
@@ -119,6 +144,7 @@ export class World {
         continue;
       }
       this.updateWeapon(p, cmd);
+      this.updatePortalGun(p, cmd);
     }
 
     this.stepProjectiles();
@@ -148,6 +174,49 @@ export class World {
     };
     this.projectiles.push(projectile);
     this.events.push({ type: "fire", player: p.id, projectile: projectile.id, origin: clone(eye), dir });
+  }
+
+  /** Secondary trigger: one portal shot per press, replacing the owner's oldest portal if it lands. */
+  private updatePortalGun(p: PlayerState, cmd: PlayerCommand) {
+    if (p.portalCooldown > 0) p.portalCooldown--;
+    const pressed = cmd.portal && !p.portalHeld;
+    p.portalHeld = cmd.portal;
+    if (!pressed || p.portalCooldown > 0) return;
+    p.portalCooldown = PORTAL.cooldownTicks;
+
+    const owner = this.portalOwnerOf(p);
+    const mine = this.portals.filter((pt) => pt.owner === owner);
+    const oldest =
+      mine.length >= 2
+        ? mine.reduce((a, b) => (b.placedTick < a.placedTick || (b.placedTick === a.placedTick && b.id < a.id) ? b : a))
+        : null;
+    // The portal being replaced doesn't block the new one.
+    const others = this.portals.filter((pt) => pt !== oldest);
+    const eye = vec3(p.origin.x, p.origin.y, p.origin.z + EYE_HEIGHT);
+    const shot = shootPortal(this.collision, this.level, eye, viewDirection(p.yaw, p.pitch, vec3()), p.yaw, others);
+
+    let placed: Portal | null = null;
+    if (shot.placement) {
+      if (oldest) this.removePortals((pt) => pt === oldest);
+      placed = { ...shot.placement, id: this.nextPortalId++, owner, placedTick: this.tick };
+      this.portals.push(placed);
+    }
+    this.events.push({
+      type: "portalShot",
+      player: p.id,
+      owner,
+      origin: eye,
+      end: shot.end,
+      normal: shot.normal,
+      portal: placed?.id ?? null,
+      replaced: placed && oldest ? oldest.id : null,
+    });
+  }
+
+  private removePortals(match: (p: Portal) => boolean) {
+    let kept = 0;
+    for (const pt of this.portals) if (!match(pt)) this.portals[kept++] = pt;
+    this.portals.length = kept;
   }
 
   /** Moves every projectile one tick; the first thing it touches, wall or player, stops it. */

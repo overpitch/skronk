@@ -1,5 +1,5 @@
 // Generates public/assets/maps/test_box.map: a box room with stairs, a ramp, a
-// pillar, a jumpable wall and one portal-friendly wall. It exists to test the
+// pillar, a jumpable wall and two portal-friendly walls (east and west). It exists to test the
 // loader and movement; Dave's own maps get drawn in TrenchBroom.
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -56,8 +56,8 @@ const B = (faces) => brushes.push(faces);
 // Room shell: interior x,y in [-512, 512], z in [0, 384].
 B(box([-528, -528, -16], [528, 528, 0], "base/floor"));
 B(box([-528, -528, 384], [528, 528, 400], "base/ceiling"));
-B(box([-528, -528, 0], [-512, 528, 384], "base/wall"));
-// East wall: the face pointing into the room is portal-friendly.
+// West and east walls: the faces pointing into the room are portal-friendly.
+B(box([-528, -528, 0], [-512, 528, 384], (n) => (n[0] === 1 ? ["base/portal_panel", SURF_PORTAL] : ["base/wall", 0])));
 B(box([512, -528, 0], [528, 528, 384], (n) => (n[0] === -1 ? ["base/portal_panel", SURF_PORTAL] : ["base/wall", 0])));
 B(box([-512, -528, 0], [512, -512, 384], "base/wall"));
 B(box([-512, 512, 0], [512, 528, 384], "base/wall"));

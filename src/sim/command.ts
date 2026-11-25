@@ -13,9 +13,9 @@ export interface PlayerCommand {
   /** Radians, positive looks up. */
   pitch: number;
   jump: boolean;
-  /** Primary trigger: shoot. Unused until milestone 2. */
+  /** Primary trigger: shoot. */
   fire: boolean;
-  /** Secondary trigger: place portal. Unused until milestone 3. */
+  /** Secondary trigger: fire a portal (one per press). */
   portal: boolean;
 }
 
