@@ -101,7 +101,8 @@ async function start() {
     const speed = Math.round(Math.hypot(me.velocity.x, me.velocity.y));
     debug.textContent =
       `${fps} fps  ${speed} ups  ${me.onGround ? "ground" : "air"}\n` +
-      `${me.origin.x.toFixed(0)} ${me.origin.y.toFixed(0)} ${me.origin.z.toFixed(0)}  tick ${world.tick}`;
+      `${me.origin.x.toFixed(0)} ${me.origin.y.toFixed(0)} ${me.origin.z.toFixed(0)}  tick ${world.tick}\n` +
+      `controller: ${input.padStatus ?? "none (press a button to connect)"}`;
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

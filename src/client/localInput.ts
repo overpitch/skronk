@@ -41,6 +41,8 @@ export class LocalInput {
   private mouseButtons = 0;
   private pad = { forward: 0, right: 0, jump: false, fire: false, portal: false };
   private padPrev: boolean[] = [];
+  /** For the debug HUD: what the browser reports, or null if no pad is visible yet. */
+  padStatus: string | null = null;
 
   constructor(private canvas: HTMLCanvasElement) {
     // Edge on Xbox otherwise turns the controller into a mouse cursor.
@@ -89,8 +91,12 @@ export class LocalInput {
     if (!pad) {
       this.pad = { forward: 0, right: 0, jump: false, fire: false, portal: false };
       this.padPrev = [];
+      this.padStatus = null;
       return;
     }
+    // Ids are long ("Xbox Wireless Controller (STANDARD GAMEPAD Vendor: ...)"); keep the name.
+    const name = pad.id.replace(/\s*\(.*$/, "").slice(0, 40) || "gamepad";
+    this.padStatus = pad.mapping === "standard" ? name : `${name} (non-standard layout, buttons may be wrong)`;
     const pressed = (i: number) => !!pad.buttons[i]?.pressed;
     const justPressed = (i: number) => pressed(i) && !this.padPrev[i];
     const anyJustPressed = (except: number) => pad.buttons.some((_, i) => i !== except && justPressed(i));
