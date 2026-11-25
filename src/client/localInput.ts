@@ -40,6 +40,12 @@ export class LocalInput {
   onToggleInvertLook: () => void = () => {};
 
   private keys = new Set<string>();
+  /**
+   * Portal presses (right click, E) since the sim last read a command. Counted as presses,
+   * not held state: Chrome on a Mac can skip the mouseup after a right click, which left the
+   * button "held" forever and blocked every later shot.
+   */
+  private portalPresses = 0;
   private mouseButtons = 0;
   private pad = { forward: 0, right: 0, jump: false, fire: false, portal: false };
   private padPrev: boolean[] = [];
@@ -53,12 +59,14 @@ export class LocalInput {
 
     window.addEventListener("keydown", (e) => {
       this.keys.add(e.code);
+      if (e.code === "KeyE" && !e.repeat) this.portalPresses++;
       if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
     window.addEventListener("blur", () => {
       this.keys.clear();
       this.mouseButtons = 0;
+      this.portalPresses = 0;
     });
 
     canvas.addEventListener("click", () => {
@@ -74,7 +82,9 @@ export class LocalInput {
       this.addLook(-e.movementX * k, -e.movementY * k);
     });
     document.addEventListener("mousedown", (e) => {
-      if (document.pointerLockElement === canvas) this.mouseButtons = e.buttons;
+      if (document.pointerLockElement !== canvas) return;
+      this.mouseButtons = e.buttons;
+      if (e.button === 2) this.portalPresses++;
     });
     document.addEventListener("mouseup", (e) => (this.mouseButtons = e.buttons));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -138,8 +148,15 @@ export class LocalInput {
       jump: k("Space") === 1 || this.pad.jump,
       fire: (this.mouseButtons & 1) !== 0 || this.pad.fire,
       // E as well as right click: two-finger clicks are awkward on a trackpad mid-fight.
-      portal: (this.mouseButtons & 2) !== 0 || k("KeyE") === 1 || this.pad.portal,
+      portal: this.takePortalPress() || this.pad.portal,
     };
+  }
+
+  /** True for one command per press, so the sim sees a press then a release. */
+  private takePortalPress(): boolean {
+    if (this.portalPresses === 0) return false;
+    this.portalPresses = 0;
+    return true;
   }
 
   /** dPitch is the uninverted delta (mouse/stick up = look up). */
