@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skronk</title>
+    <link rel="stylesheet" href="/src/client/style.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="crosshair"></div>
+    <div id="debug"></div>
+    <div id="overlay">
+      <h1>SKRONK</h1>
+      <p>Click to play &middot; or press A on a controller</p>
+      <p class="keys">WASD move &middot; Space jump &middot; Mouse look &middot; Esc release mouse</p>
+      <p id="status"></p>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

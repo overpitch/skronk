@@ -1,0 +1,26 @@
+{
+  "name": "skronk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "textures": "node tools/gen-textures.mjs",
+    "maps:test": "node tools/make-test-map.mjs",
+    "tb:install": "node tools/install-trenchbroom-config.mjs"
+  },
+  "dependencies": {
+    "three": "^0.181.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/three": "^0.181.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4",
+    "vitest": "^4.0.14"
+  }
+}

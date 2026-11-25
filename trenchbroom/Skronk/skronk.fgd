@@ -1,0 +1,37 @@
+// Entity definitions for Skronk. Keep in sync with src/level/trenchbroom/trenchbroomLoader.ts.
+
+@SolidClass = worldspawn : "World" []
+
+@SolidClass = func_group : "Group (treated as world geometry)" []
+
+@PointClass size(-16 -16 -24, 16 16 32) color(0 220 80) = player_spawn : "Player spawn point"
+[
+    angle(integer) : "Facing (degrees, 0 = +X)" : 0
+    team(choices) : "Team" : 0 =
+    [
+        0 : "Any"
+        1 : "Team 1"
+        2 : "Team 2"
+    ]
+]
+
+@PointClass size(-16 -16 -16, 16 16 16) color(255 80 80) = pickup_health : "Health pickup"
+[
+    amount(integer) : "Amount" : 25
+]
+
+@PointClass size(-16 -16 -16, 16 16 16) color(80 160 255) = pickup_armor : "Armor pickup"
+[
+    amount(integer) : "Amount" : 50
+]
+
+@PointClass size(-16 -16 -16, 16 16 16) color(255 200 0) = pickup_ammo : "Ammo pickup"
+[
+    amount(integer) : "Amount" : 20
+]
+
+@PointClass size(-8 -8 -8, 8 8 8) color(255 255 160) = light : "Point light"
+[
+    light(integer) : "Brightness" : 300
+    _color(color1) : "Color (0-1 RGB)" : "1 1 1"
+]
