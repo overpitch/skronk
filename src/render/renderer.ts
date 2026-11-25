@@ -10,7 +10,7 @@ import { MOVE } from "../sim/movement";
 import type { World } from "../sim/world";
 import { Effects } from "./effects";
 import { PlayerModels } from "./players";
-import { PortalViews } from "./portals";
+import { PORTAL_ONLY_LAYER, PortalViews } from "./portals";
 import { playerPortalOwner, type PortalOwner, type PortalSlot } from "../sim/portals";
 import { FIZZLE_COLOR, portalColor } from "./portalColors";
 import { TextureLibrary } from "./textures";
@@ -163,10 +163,11 @@ export class GameRenderer {
     this.handleEvents(events, localId, timeSeconds, colorOf);
     this.portals.update(world.portals, (p) => world.linkedPortal(p) !== null, (p) => colorOf(p.owner, p.slot), timeSeconds);
 
-    // Other players, interpolated between ticks.
-    const others = [...world.players.values()].filter((p) => p.id !== localId);
-    this.players.sync(others.map((p) => p.id), (id) => world.players.get(id)?.team ?? 0);
-    for (const p of others) {
+    // Players, interpolated between ticks. Your own body is only seen through portals.
+    const everyone = [...world.players.values()];
+    this.players.sync(everyone.map((p) => p.id), (id) => world.players.get(id)?.team ?? 0);
+    this.players.setLayer(localId, PORTAL_ONLY_LAYER);
+    for (const p of everyone) {
       this.v1.set(p.prevOrigin.x, p.prevOrigin.y, p.prevOrigin.z);
       this.v2.set(p.origin.x, p.origin.y, p.origin.z);
       this.v1.lerp(this.v2, alpha);
@@ -209,6 +210,7 @@ export class GameRenderer {
     const speed = me ? Math.hypot(me.velocity.x, me.velocity.y) / MOVE.maxSpeed : 0;
     this.viewModel.update(dt, speed, !!me?.onGround, !!me?.alive);
 
+    this.portals.renderViews(this.renderer, this.camera, world.portals, (p) => world.linkedPortal(p));
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     this.renderer.clearDepth();

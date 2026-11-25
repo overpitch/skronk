@@ -59,6 +59,14 @@ export class PlayerModels {
     b.group.rotation.z = yaw;
   }
 
+  /** Puts a body on one render layer only (the local player's lives on the portal-only layer). */
+  setLayer(id: PlayerId, layer: number) {
+    const b = this.bodies.get(id);
+    if (!b || b.group.userData.layer === layer) return;
+    b.group.userData.layer = layer;
+    b.group.traverse((o) => o.layers.set(layer));
+  }
+
   hit(id: PlayerId) {
     const b = this.bodies.get(id);
     if (b) b.flash = HIT_FLASH_SECONDS;
