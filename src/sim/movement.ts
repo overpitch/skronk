@@ -11,7 +11,7 @@ export const MOVE = {
   gravity: 800,
   maxSpeed: 320,
   /** Ground speed multiplier while sprinting forward. Air control is unchanged. */
-  sprintFactor: 1.4,
+  sprintFactor: 1.75,
   accelerate: 10,
   airAccelerate: 10,
   /** Cap on wish speed used for air acceleration; small value = air strafing, not air running. */

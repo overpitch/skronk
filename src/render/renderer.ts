@@ -17,6 +17,8 @@ import { TextureLibrary } from "./textures";
 import { ViewModel } from "./viewmodel";
 
 const HORIZONTAL_FOV_DEG = 100;
+/** Extra horizontal FOV at full sprint speed and above (portal flings too), so speed reads on screen. */
+const SPEED_FOV_KICK_DEG = 10;
 /** How long a local shot's tracer takes to slide from the gun muzzle onto its true path. */
 const TRACER_CONVERGE_SECONDS = 0.09;
 const PUNCH_RECOVERY = 12; // per second
@@ -49,6 +51,8 @@ export class GameRenderer {
   /** Visual-only camera kick in radians (pitch up), from firing and taking hits. */
   private punchPitch = 0;
   private punchYaw = 0;
+  /** Current speed FOV kick in degrees, eased. */
+  private fovKick = 0;
   private forward = new THREE.Vector3();
   private right = new THREE.Vector3();
   private up = new THREE.Vector3();
@@ -135,11 +139,15 @@ export class GameRenderer {
     const h = this.canvas.clientHeight || window.innerHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
+    this.applyFov();
+    this.viewModel.setAspect(this.camera.aspect);
+  }
+
+  private applyFov() {
     // Keep horizontal FOV fixed so widescreen TVs don't zoom in.
-    const hfov = (HORIZONTAL_FOV_DEG * Math.PI) / 180;
+    const hfov = ((HORIZONTAL_FOV_DEG + this.fovKick) * Math.PI) / 180;
     this.camera.fov = (2 * Math.atan(Math.tan(hfov / 2) / this.camera.aspect) * 180) / Math.PI;
     this.camera.updateProjectionMatrix();
-    this.viewModel.setAspect(this.camera.aspect);
   }
 
   render(frame: RenderFrame, events: readonly SimEvent[]) {
@@ -208,6 +216,13 @@ export class GameRenderer {
     }
 
     const speed = me ? Math.hypot(me.velocity.x, me.velocity.y) / MOVE.maxSpeed : 0;
+    // Widen the view as you go faster than a normal run: full kick at sprint speed.
+    const kick = Math.max(0, Math.min(1, (speed - 1.02) / (MOVE.sprintFactor - 1.02))) * SPEED_FOV_KICK_DEG;
+    const eased = this.fovKick + (kick - this.fovKick) * (1 - Math.exp(-6 * dt));
+    if (Math.abs(eased - this.fovKick) > 0.01) {
+      this.fovKick = eased;
+      this.applyFov();
+    }
     this.viewModel.update(dt, speed, !!me?.onGround, !!me?.alive);
 
     this.portals.renderViews(this.renderer, this.camera, world.portals, (p) => world.linkedPortal(p));

@@ -39,7 +39,7 @@ describe("movement", () => {
     const { world, p } = setup(-300, -300);
     run(world, 0.5, {});
     run(world, 1, { forward: 1, sprint: true, yaw: Math.PI / 4 });
-    expect(Math.hypot(p.velocity.x, p.velocity.y)).toBeCloseTo(448, 0);
+    expect(Math.hypot(p.velocity.x, p.velocity.y)).toBeCloseTo(320 * 1.75, 0);
     run(world, 1.5, { forward: -1, sprint: true, yaw: Math.PI / 4 });
     expect(Math.hypot(p.velocity.x, p.velocity.y)).toBeCloseTo(320, 0);
   });
