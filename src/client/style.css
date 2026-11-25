@@ -66,6 +66,25 @@ body {
   font-size: 18px;
 }
 
+#overlay .setting {
+  margin: 20px 0 2px;
+  padding: 8px 18px;
+  font: inherit;
+  font-size: 16px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  /* The overlay lets clicks through to the canvas; the button must catch its own. */
+  pointer-events: auto;
+}
+
+#overlay .setting[aria-pressed="true"] {
+  background: rgba(120, 180, 255, 0.25);
+  border-color: rgba(140, 190, 255, 0.8);
+}
+
 #overlay .keys,
 #overlay #status {
   font-size: 14px;

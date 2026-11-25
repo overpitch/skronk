@@ -1,4 +1,5 @@
 import { LocalInput } from "./client/localInput";
+import { loadSettings, saveSettings } from "./client/settings";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { clone, copy, lerp, vec3 } from "./math/vec3";
 import { GameRenderer } from "./render/renderer";
@@ -36,7 +37,29 @@ async function start() {
   input.onDeactivate = () => {
     active = false;
     overlay.classList.remove("hidden");
+    // Gamepad pause while the mouse is still locked: release it so the menu is clickable.
+    if (document.pointerLockElement) document.exitPointerLock();
   };
+
+  const settings = loadSettings();
+  const invertButton = document.getElementById("invert-look") as HTMLButtonElement;
+  const applySettings = () => {
+    input.invertLook = settings.invertLook;
+    invertButton.textContent = `Invert look: ${settings.invertLook ? "On" : "Off"}`;
+    invertButton.setAttribute("aria-pressed", String(settings.invertLook));
+  };
+  const toggleInvertLook = () => {
+    settings.invertLook = !settings.invertLook;
+    saveSettings(settings);
+    applySettings();
+  };
+  invertButton.addEventListener("click", () => {
+    toggleInvertLook();
+    // Otherwise Space (jump) would press the focused button again later.
+    invertButton.blur();
+  });
+  input.onToggleInvertLook = toggleInvertLook;
+  applySettings();
   status.textContent = `${level.name}: ${level.brushes.length} brushes, ${level.spawns.length} spawns`;
 
   const prevOrigin = clone(me.origin);
@@ -50,7 +73,7 @@ async function start() {
   const frame = (now: number) => {
     const dt = Math.min(0.25, (now - last) / 1000);
     last = now;
-    input.update(active ? dt : 0);
+    input.update(dt, !active);
 
     acc += dt;
     let ticks = 0;

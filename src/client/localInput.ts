@@ -12,8 +12,10 @@ const PITCH_LIMIT = (89 * Math.PI) / 180;
 
 // Standard Gamepad mapping indices.
 const PAD_A = 0;
+const PAD_Y = 3;
 const PAD_LT = 6;
 const PAD_RT = 7;
+const PAD_MENU = 9;
 
 /** Radial deadzone, rescaled so the live range still starts at 0. */
 function deadzone(x: number, y: number): [number, number] {
@@ -26,14 +28,19 @@ function deadzone(x: number, y: number): [number, number] {
 export class LocalInput {
   yaw = 0;
   pitch = 0;
+  /** Flight-stick style: pulling back (mouse or stick down) looks up. */
+  invertLook = false;
   /** Called when the player first engages (click or gamepad button), to hide the menu. */
   onActivate: () => void = () => {};
+  /** Called when the mouse is released or the gamepad Menu button pauses. */
   onDeactivate: () => void = () => {};
+  /** Gamepad Y while the menu is open. */
+  onToggleInvertLook: () => void = () => {};
 
   private keys = new Set<string>();
   private mouseButtons = 0;
   private pad = { forward: 0, right: 0, jump: false, fire: false, portal: false };
-  private padWasPressed = false;
+  private padPrev: boolean[] = [];
 
   constructor(private canvas: HTMLCanvasElement) {
     // Edge on Xbox otherwise turns the controller into a mouse cursor.
@@ -72,20 +79,35 @@ export class LocalInput {
     return document.pointerLockElement === this.canvas;
   }
 
-  /** Per rendered frame: poll the gamepad and apply stick look at a rate. */
-  update(dt: number) {
+  /**
+   * Per rendered frame: poll the gamepad and apply stick look at a rate.
+   * While the menu is open, sticks are ignored and buttons drive the menu.
+   */
+  update(dt: number, menuOpen: boolean) {
     const pads = navigator.getGamepads?.() ?? [];
     const pad = pads.find((p) => p && p.connected) ?? null;
     if (!pad) {
       this.pad = { forward: 0, right: 0, jump: false, fire: false, portal: false };
+      this.padPrev = [];
       return;
     }
+    const pressed = (i: number) => !!pad.buttons[i]?.pressed;
+    const justPressed = (i: number) => pressed(i) && !this.padPrev[i];
+    const anyJustPressed = (except: number) => pad.buttons.some((_, i) => i !== except && justPressed(i));
+    if (menuOpen) {
+      if (justPressed(PAD_Y)) this.onToggleInvertLook();
+      else if (anyJustPressed(PAD_Y)) this.onActivate();
+    } else if (justPressed(PAD_MENU)) {
+      this.onDeactivate();
+    }
+    this.padPrev = pad.buttons.map((b) => b.pressed);
+    if (menuOpen) dt = 0;
+
     const [mx, my] = deadzone(pad.axes[0] ?? 0, pad.axes[1] ?? 0);
     const [lx, ly] = deadzone(pad.axes[2] ?? 0, pad.axes[3] ?? 0);
     // Squared response curve: fine aim near centre, fast turns at the edge.
     const curve = (v: number) => Math.sign(v) * v * v;
     this.addLook(-curve(lx) * PAD_YAW_RATE * dt, -curve(ly) * PAD_PITCH_RATE * dt);
-    const pressed = (i: number) => !!pad.buttons[i]?.pressed;
     this.pad = {
       forward: -my,
       right: mx,
@@ -93,9 +115,6 @@ export class LocalInput {
       fire: pressed(PAD_RT),
       portal: pressed(PAD_LT),
     };
-    const anyPressed = pad.buttons.some((b) => b.pressed);
-    if (anyPressed && !this.padWasPressed) this.onActivate();
-    this.padWasPressed = anyPressed;
   }
 
   command(): PlayerCommand {
@@ -113,7 +132,9 @@ export class LocalInput {
     };
   }
 
+  /** dPitch is the uninverted delta (mouse/stick up = look up). */
   private addLook(dYaw: number, dPitch: number) {
+    if (this.invertLook) dPitch = -dPitch;
     this.yaw = (this.yaw + dYaw) % (Math.PI * 2);
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + dPitch));
   }
