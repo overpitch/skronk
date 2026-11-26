@@ -98,6 +98,7 @@ const out = [
   "{",
   '"classname" "worldspawn"',
   '"mapversion" "220"',
+  '"message" "Test Box"',
   ...brushes.flatMap((faces, i) => [`// brush ${i}`, "{", ...faces, "}"]),
   "}",
   pointEntity({ classname: "player_spawn", origin: "0 -300 25", angle: "90" }),

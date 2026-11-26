@@ -25,6 +25,8 @@ export interface Settings {
   bots: number;
   /** Sound volume, 0..1. */
   volume: number;
+  /** Map to play (file name without .map). */
+  map: string;
 }
 
 export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
@@ -32,7 +34,7 @@ export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
 const STORAGE_KEY = "skronk.settings";
 
 export function defaultSettings(): Settings {
-  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1 };
+  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box" };
 }
 
 export const difficultyOf = (id: Difficulty) => DIFFICULTIES.find((d) => d.id === id) ?? DIFFICULTIES[2];
@@ -49,6 +51,7 @@ export function loadSettings(): Settings {
     if (DIFFICULTIES.some((d) => d.id === saved.difficulty)) settings.difficulty = saved.difficulty;
     if (Number.isInteger(saved.bots) && saved.bots >= 0 && saved.bots <= MAX_BOTS) settings.bots = saved.bots;
     if (typeof saved.volume === "number" && saved.volume >= 0 && saved.volume <= 1) settings.volume = saved.volume;
+    if (typeof saved.map === "string" && /^[\w-]+$/.test(saved.map)) settings.map = saved.map;
   } catch {
     // Unreadable storage: keep defaults.
   }

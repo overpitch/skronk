@@ -1,3 +1,4 @@
+import maps from "virtual:maps";
 import { buildNavGraph, type NavGraph } from "./bots/nav";
 import { Bot } from "./bots/bot";
 import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
@@ -26,8 +27,11 @@ const debug = document.getElementById("debug")!;
 
 async function start() {
   const params = new URLSearchParams(location.search);
-  const mapName = params.get("map") ?? "test_box";
   const settings = loadSettings();
+  // ?map=<name> plays public/assets/maps/<name>.map this visit; otherwise the menu's choice.
+  const known = (name: string | null) => !!name && maps.some((m) => m.name === name);
+  const mapName = params.get("map") ?? (known(settings.map) ? settings.map : (maps[0]?.name ?? "test_box"));
+  const mapTitle = maps.find((m) => m.name === mapName)?.title ?? mapName;
   // Address options override the menu's saved choices for this visit (handy for testing):
   // ?bots=N bots that roam and fight; ?botskill=0..1 instead of the difficulty;
   // ?navdebug draws the bots' walk graph; ?mute plays no sound.
@@ -43,7 +47,7 @@ async function start() {
   const speedParam = Number(params.get("dummyspeed"));
   const dummySpeed = params.has("dummyspeed") && Number.isFinite(speedParam) ? Math.max(0, Math.min(1, speedParam)) : DUMMY_DEFAULT_SPEED;
   const assets = `${import.meta.env.BASE_URL}assets`;
-  status.textContent = `Loading ${mapName}…`;
+  status.textContent = `Loading ${mapTitle}…`;
   const level = await new TrenchBroomLoader().load(`${assets}/maps/${mapName}.map`);
 
   const world = new World(level);
@@ -56,7 +60,7 @@ async function start() {
   let nextId = LOCAL_PLAYER + 1;
   let nav: NavGraph | null = null;
   if (botCount > 0 || navDebug) {
-    status.textContent = `Mapping ${mapName} for bots…`;
+    status.textContent = `Mapping ${mapTitle} for bots…`;
     await new Promise((r) => setTimeout(r)); // let the status show before the build blocks
     nav = buildNavGraph(level, world.collision);
   }
@@ -117,6 +121,7 @@ async function start() {
   const sensSlider = document.getElementById("mouse-sens") as HTMLInputElement;
   const sensValue = document.getElementById("mouse-sens-value")!;
   const botButton = document.getElementById("bot-count") as HTMLButtonElement;
+  const mapButton = document.getElementById("map-choice") as HTMLButtonElement;
   const difficultyButton = document.getElementById("difficulty") as HTMLButtonElement;
   const volumeSlider = document.getElementById("volume") as HTMLInputElement;
   const volumeValue = document.getElementById("volume-value")!;
@@ -130,6 +135,7 @@ async function start() {
     sensValue.textContent = settings.mouseSensitivity.toFixed(2);
     invertButton.textContent = `Invert look: ${settings.invertLook ? "On" : "Off"}`;
     invertButton.setAttribute("aria-pressed", String(settings.invertLook));
+    mapButton.textContent = `Map: ${mapTitle}`;
     botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
     difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
     const volume = muted ? 0 : settings.volume;
@@ -152,6 +158,19 @@ async function start() {
   // Click goes round 0..MAX; the controller's LB / RB step down and up.
   onClick(botButton, () => changeBots((fighters.length + 1) % (MAX_BOTS + 1)));
   input.onChangeBots = (delta) => changeBots(fighters.length + delta);
+  // Another map: saved, then the page reloads with it (a fresh match).
+  const changeMap = (delta: number) => {
+    if (maps.length < 2) return;
+    const i = Math.max(0, maps.findIndex((m) => m.name === mapName));
+    const next = maps[(i + delta + maps.length) % maps.length].name;
+    settings.map = next;
+    saveSettings(settings);
+    const url = new URL(location.href);
+    if (url.searchParams.has("map")) url.searchParams.set("map", next);
+    location.assign(url);
+  };
+  onClick(mapButton, () => changeMap(1));
+  input.onChangeMap = changeMap;
   const cycleDifficulty = () => {
     const i = DIFFICULTIES.findIndex((d) => d.id === settings.difficulty);
     settings.difficulty = DIFFICULTIES[(i + 1) % DIFFICULTIES.length].id;
@@ -188,7 +207,7 @@ async function start() {
     sensSlider.blur();
   });
   applySettings();
-  status.textContent = `${level.name}: ${level.brushes.length} brushes, ${level.spawns.length} spawns`;
+  status.textContent = `${mapTitle}: ${level.brushes.length} brushes, ${level.spawns.length} spawns`;
 
   const eye = vec3();
   const frameEvents: SimEvent[] = [];
