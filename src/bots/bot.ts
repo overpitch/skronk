@@ -339,19 +339,28 @@ export class Bot {
       this.strafe = -this.strafe;
       this.blocked = 0;
     }
-    for (const side of [this.strafe, -this.strafe]) {
-      const x = -uy * side + ux * range;
-      const y = ux * side + uy * range;
+    // Preferred: strafe while closing in or backing off. At an edge, strafe along it; failing
+    // that, just close in or back off; failing that, any safe way at all rather than freezing.
+    const candidates: [number, number, number][] = [
+      [this.strafe, range, this.strafe],
+      [-this.strafe, range, -this.strafe],
+      [this.strafe, 0, this.strafe],
+      [-this.strafe, 0, -this.strafe],
+    ];
+    if (range !== 0) candidates.push([0, range, this.strafe]);
+    for (const [side, r, keep] of candidates) {
+      const x = -uy * side + ux * r;
+      const y = ux * side + uy * r;
       const len = Math.hypot(x, y);
       const dir = { x: x / len, y: y / len };
       if (this.safe(world, me, dir)) {
-        this.strafe = side;
+        this.strafe = keep;
         return { dir, jump: false };
       }
     }
-    // Both sides drop away: only close in or back off, if that's safe.
-    if (range !== 0) {
-      const dir = { x: ux * Math.sign(range), y: uy * Math.sign(range) };
+    for (let k = 0; k < 8; k++) {
+      const a = (k * Math.PI) / 4;
+      const dir = { x: Math.cos(a), y: Math.sin(a) };
       if (this.safe(world, me, dir)) return { dir, jump: false };
     }
     return { dir: null, jump: false };

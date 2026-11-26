@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkLevel, type Issue } from "../src/devtools/mapCheck";
@@ -60,4 +60,15 @@ describe("map checker", () => {
     const issues = await check((t) => t.replace(/\( -496 -496 0 \)/g, "( -400 -400 0 )").replace(/-496/g, "-384"));
     expect(find(issues, "note", "smaller than a portal").length).toBeGreaterThan(0);
   });
+});
+
+describe("the maps in public/assets/maps", () => {
+  const dir = resolve(import.meta.dirname, "../public/assets/maps");
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".map"))) {
+    it(`${file} has no errors or warnings`, async () => {
+      const level = buildLevel(file, parseMap(readFileSync(resolve(dir, file), "utf8")));
+      const issues = await checkLevel(level, { textureExists });
+      expect(issues.filter((i) => i.level !== "note")).toEqual([]);
+    });
+  }
 });
