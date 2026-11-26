@@ -11,9 +11,30 @@ import { applySnapshot, captureSnapshot } from "../src/net/snapshot";
 import { Predictor } from "../src/client/prediction";
 import type { PlayerCommand } from "../src/sim/command";
 import { set } from "../src/math/vec3";
-import { emptyCommand } from "../src/sim/command";
+import { emptyCommand, sanitizeCommand } from "../src/sim/command";
+import { serverAddress } from "../src/client/netClient";
 import { World } from "../src/sim/world";
 import { loadTestMap } from "./helpers";
+
+describe("joining and commands from outside", () => {
+  it("cleans up commands from the network", () => {
+    const c = sanitizeCommand({ forward: 5, right: -Infinity, yaw: "x", pitch: 9, jump: "yes", fire: true, extra: 1 });
+    expect(c).toEqual({ forward: 1, right: 0, yaw: 0, pitch: (89 * Math.PI) / 180, jump: false, sprint: false, fire: true, portal: false });
+    expect(sanitizeCommand(null)).toEqual(emptyCommand());
+    expect(Number.isFinite(sanitizeCommand({ yaw: 1e300 }).yaw)).toBe(true);
+  });
+
+  it("works out the address to join", () => {
+    const home = { protocol: "http:", hostname: "192.168.1.98" };
+    const live = { protocol: "https:", hostname: "overpitch.github.io" };
+    expect(serverAddress("", home)).toBe("ws://192.168.1.98:5175");
+    expect(serverAddress("other-mac", home)).toBe("ws://other-mac:5175");
+    expect(serverAddress("other-mac:9000", home)).toBe("ws://other-mac:9000");
+    expect(serverAddress("", live, "wss://skronk.example.com")).toBe("wss://skronk.example.com");
+    expect(serverAddress("skronk.example.com", live)).toBe("wss://skronk.example.com");
+    expect(serverAddress("ws://test:1", live, "wss://skronk.example.com")).toBe("ws://test:1");
+  });
+});
 
 describe("snapshots", () => {
   it("copy a world mid-game into a fresh one, through JSON", () => {
@@ -214,6 +235,29 @@ describe("game server", () => {
     expect(await page.text()).toContain("Skronk");
     expect((await fetch(`${base}/missing.js`)).status).toBe(404);
     expect((await fetch(`${base}/%2e%2e/%2e%2e/etc/passwd`)).status).toBe(404);
+  });
+
+  it("shrugs off nonsense from a browser", async () => {
+    running = await startServer({ map: "test_box", bots: 0, skill: 0.5, port: 0 });
+    const health = await fetch(`http://localhost:${running.port}/health`);
+    expect(await health.text()).toBe("ok");
+    const a = connect(running.port);
+    await a.opened;
+    a.socket.send("not json");
+    a.socket.send(JSON.stringify(null));
+    a.socket.send(JSON.stringify({ t: "hello", name: { evil: true } }));
+    const w = await a.waitFor(isWelcome);
+    for (let i = 0; i < 30; i++) {
+      a.socket.send(JSON.stringify({ t: "cmd", seq: i, cmd: { forward: 1e9, yaw: "north", pitch: null, fire: "always" } }));
+      a.socket.send(JSON.stringify({ t: "cmd", seq: "x", cmd: {} }));
+      await new Promise((r) => setTimeout(r, 1000 / 60));
+    }
+    await new Promise((r) => setTimeout(r, 100));
+    const p = running.world.players.get(w.id)!;
+    expect([p.origin.x, p.origin.y, p.origin.z, p.yaw].every(Number.isFinite)).toBe(true);
+    expect(Math.hypot(p.velocity.x, p.velocity.y)).toBeLessThanOrEqual(321); // ordinary run speed at most
+    expect(new Map(w.names).get(w.id)).toBe("Player 1");
+    a.socket.close();
   });
 
   it("lets two browsers join, and each sees the other move", async () => {

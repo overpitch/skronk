@@ -15,7 +15,7 @@ import { buildLevel } from "../src/level/trenchbroom/trenchbroomLoader";
 import { parseMap } from "../src/level/trenchbroom/mapParser";
 import type { ClientMessage, ServerMessage } from "../src/net/protocol";
 import { captureSnapshot } from "../src/net/snapshot";
-import { emptyCommand, type PlayerCommand } from "../src/sim/command";
+import { emptyCommand, sanitizeCommand, type PlayerCommand } from "../src/sim/command";
 import type { PlayerId } from "../src/sim/events";
 import { TICK_DT, World } from "../src/sim/world";
 
@@ -27,6 +27,12 @@ const MAX_QUEUED = 4;
  * the background or a Wi-Fi hiccup shouldn't leave someone running into a wall.
  */
 const IDLE_STOP_TICKS = 15;
+/** Biggest message a browser may send (a command is ~200 bytes). */
+const MAX_MESSAGE_BYTES = 4096;
+/** Connections at once, joined or not: enough for a full game plus a few waiting at the door. */
+const MAX_CONNECTIONS = MAX_PLAYERS * 3;
+/** A connection that hasn't said hello by then is dropped. */
+const HELLO_TIMEOUT_MS = 10_000;
 
 export interface ServerOptions {
   map: string;
@@ -97,10 +103,26 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     for (const c of clients) if (c.socket.readyState === c.socket.OPEN) c.socket.send(text);
   };
 
-  const http = createServer((req, res) => void serveStatic(options.staticDir, req, res));
-  const wss = new WebSocketServer({ server: http });
+  const http = createServer((req, res) => {
+    // For hosting services' health checks.
+    if (req.url === "/health") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
+      return;
+    }
+    void serveStatic(options.staticDir, req, res);
+  });
+  const wss = new WebSocketServer({ server: http, maxPayload: MAX_MESSAGE_BYTES });
   wss.on("connection", (socket) => {
     let client: Client | null = null;
+    if (wss.clients.size > MAX_CONNECTIONS) {
+      socket.close();
+      return;
+    }
+    const helloTimer = setTimeout(() => {
+      if (!client) socket.close();
+    }, HELLO_TIMEOUT_MS);
+    socket.on("error", () => socket.terminate());
     socket.on("message", (data) => {
       let msg: ClientMessage;
       try {
@@ -108,7 +130,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       } catch {
         return;
       }
+      if (typeof msg !== "object" || msg === null) return;
       if (msg.t === "hello" && !client) {
+        clearTimeout(helloTimer);
         if (world.players.size >= MAX_PLAYERS) {
           send(socket, { t: "refused", reason: `the game is full (${MAX_PLAYERS} players)` });
           socket.close();
@@ -116,18 +140,20 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         }
         const id = nextId++;
         world.addPlayer(id);
-        names.set(id, uniqueName((msg.name ?? "").replace(/\s+/g, " ").trim().slice(0, 20) || `Player ${clients.size + 1}`));
+        names.set(id, uniqueName((typeof msg.name === "string" ? msg.name : "").replace(/\s+/g, " ").trim().slice(0, 20) || `Player ${clients.size + 1}`));
         client = { socket, id, queue: [], last: emptyCommand(), ack: -1, idle: 0 };
         clients.add(client);
         send(socket, { t: "welcome", id, map: options.map, names: roster() });
         broadcast({ t: "roster", names: roster() });
         log(`${names.get(id)} joined (${clients.size} connected)`);
       } else if (msg.t === "cmd" && client) {
-        client.queue.push({ seq: msg.seq, cmd: msg.cmd });
+        if (typeof msg.seq !== "number" || !Number.isFinite(msg.seq)) return;
+        client.queue.push({ seq: msg.seq, cmd: sanitizeCommand(msg.cmd) });
         if (client.queue.length > MAX_QUEUED) client.queue.splice(0, client.queue.length - MAX_QUEUED);
       }
     });
     socket.on("close", () => {
+      clearTimeout(helloTimer);
       if (!client) return;
       clients.delete(client);
       world.removePlayer(client.id);

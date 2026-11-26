@@ -24,9 +24,21 @@ export interface ReceivedSnapshot {
   ack: number;
 }
 
-/** ws:// address for a ?join value: empty joins the machine the page came from; "host" or "host:port" another. */
-export function serverAddress(join: string): string {
-  const host = join.trim() || location.hostname;
+/**
+ * The WebSocket address to join, from a ?join value:
+ * - a full address ("wss://skronk.example.com") is used as it is;
+ * - "host" or "host:port" means that machine;
+ * - empty means the online server the site was built for (`online`, if any), else the
+ *   machine the page came from.
+ * A page loaded over https can only use secure connections (wss), which an online host
+ * provides on the normal port; at home, over http, it's ws on the game server's port.
+ */
+export function serverAddress(join: string, page: { protocol: string; hostname: string }, online?: string): string {
+  const value = join.trim() || online?.trim() || "";
+  if (value.includes("://")) return value;
+  const secure = page.protocol === "https:";
+  const host = value || page.hostname;
+  if (secure) return `wss://${host}`;
   return `ws://${host.includes(":") ? host : `${host}:${GAME_PORT}`}`;
 }
 

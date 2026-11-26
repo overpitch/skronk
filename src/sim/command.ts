@@ -31,3 +31,26 @@ export const emptyCommand = (): PlayerCommand => ({
   fire: false,
   portal: false,
 });
+
+const PITCH_MAX = (89 * Math.PI) / 180;
+
+/**
+ * A command from outside (the network) made safe: anything missing or not a
+ * finite number becomes 0 or false, movement is kept to -1..1 and pitch to the
+ * look limits. One bad value (NaN, say) would otherwise spread through the world.
+ */
+export function sanitizeCommand(raw: unknown): PlayerCommand {
+  const c = (raw ?? {}) as Record<string, unknown>;
+  const num = (v: unknown, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : 0);
+  const yaw = num(c.yaw, -1e6, 1e6);
+  return {
+    forward: num(c.forward, -1, 1),
+    right: num(c.right, -1, 1),
+    yaw: yaw % (Math.PI * 2),
+    pitch: num(c.pitch, -PITCH_MAX, PITCH_MAX),
+    jump: c.jump === true,
+    sprint: c.sprint === true,
+    fire: c.fire === true,
+    portal: c.portal === true,
+  };
+}

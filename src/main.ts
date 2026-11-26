@@ -42,7 +42,9 @@ async function start() {
   let net: NetClient | null = null;
   let localId = LOCAL_PLAYER;
   let serverMap: string | null = null;
-  const url = serverAddress(params.get("join") ?? (servedByGameServer ? location.host : ""));
+  // The live site is built with VITE_GAME_SERVER set to the online server's address, if there is one.
+  const onlineServer: string | undefined = import.meta.env.VITE_GAME_SERVER || undefined;
+  const url = serverAddress(params.get("join") ?? (servedByGameServer ? location.host : ""), location, onlineServer);
   if (joining) {
     status.textContent = `Joining ${url}…`;
     // ?lag=ms pretends the connection is that slow (round trip), to try out prediction at home.
@@ -166,6 +168,11 @@ async function start() {
     botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
     difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
     networkButton.textContent = net ? "Leave network game" : "Join network game";
+    // On the live (https) site there's nothing to join until an online server is set up.
+    if (!net && location.protocol === "https:" && !onlineServer) {
+      networkButton.textContent = "Network game: no online server yet";
+      networkButton.disabled = true;
+    }
     if (nameBox !== document.activeElement) nameBox.value = settings.name;
     if (net) {
       // The server decides these in a network game.

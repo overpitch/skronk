@@ -14,15 +14,18 @@ import { DIFFICULTIES } from "../src/client/settings";
 import { GAME_PORT } from "../src/net/protocol";
 import { MAX_PLAYERS, startServer } from "./gameServer";
 
+/** --name value on the command line, else the SKRONK_NAME environment variable (how hosts pass settings), else fallback. */
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+  if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1];
+  return process.env[`SKRONK_${name.toUpperCase()}`] ?? fallback;
 }
 
 const map = arg("map", "arena");
 const bots = Math.max(0, Math.min(MAX_PLAYERS - 1, Number(arg("bots", "0")) || 0));
 const difficulty = DIFFICULTIES.find((d) => d.id === arg("difficulty", "normal")) ?? DIFFICULTIES[2];
-const port = Number(arg("port", String(GAME_PORT)));
+// Hosting services say which port to listen on in PORT.
+const port = Number(arg("port", process.env.PORT ?? String(GAME_PORT)));
 const serve = process.argv.includes("--serve");
 const staticDir = serve ? resolve(import.meta.dirname, "../dist") : undefined;
 
