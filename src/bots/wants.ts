@@ -4,14 +4,16 @@
  */
 import type { PickupState } from "../sim/pickups";
 import { TICK_RATE } from "../sim/tick";
-import { VITALS, WEAPON } from "../sim/weapon";
+import { VITALS } from "../sim/weapon";
+import { FISTS, holds, WEAPONS, weaponIndex } from "../sim/weapons";
 import type { PlayerState, World } from "../sim/world";
 import type { NavGraph } from "./nav";
+import { hasGunAmmo, isWeaponKind, WEAPON_WANT } from "./weaponChoice";
 
 /** Below this health it's hurting: health is worth a lot more, and it retreats to it in a fight. */
 export const LOW_HEALTH = 40;
-/** Below this ammo it's running dry: ammo is worth a lot more. */
-export const LOW_AMMO = 25;
+/** Below this share of a full load (across the guns it holds) it's running dry: ammo is worth a lot more. */
+export const LOW_AMMO_SHARE = 0.15;
 /** A pickup loses half its appeal for every this many ticks of travel. */
 const HALF_APPEAL_TICKS = 4 * TICK_RATE;
 /** Not worth a detour below this. */
@@ -27,12 +29,39 @@ export function pickupWorth(me: PlayerState, pk: PickupState): number {
     case "armor":
       return (Math.min(pk.amount, VITALS.maxArmor - me.armor) / VITALS.maxArmor) * 0.7;
     case "ammo": {
-      const gain = Math.min(pk.amount, WEAPON.maxAmmo - me.ammo) / WEAPON.maxAmmo;
-      return gain * (me.ammo === 0 ? 6 : me.ammo < LOW_AMMO ? 3 : 1);
+      const guns = heldGuns(me);
+      if (guns.length === 0) return 0;
+      const gain = guns.reduce((sum, w) => sum + Math.min(WEAPONS[w].boxAmmo, WEAPONS[w].maxAmmo - me.ammo[w]) / WEAPONS[w].maxAmmo, 0) / guns.length;
+      return gain * ammoUrgency(me);
     }
-    default:
-      return 0;
   }
+  if (!isWeaponKind(pk.kind)) return 0;
+  const w = weaponIndex(pk.kind);
+  // One it hasn't got: worth a lot. One it has: only for the ammo.
+  if (!holds(me, w)) return (WEAPON_WANT[pk.kind] ?? 1) * (hasGunAmmo(me) ? 1 : 2);
+  const spec = WEAPONS[w];
+  return (Math.min(pk.amount, spec.maxAmmo - me.ammo[w]) / spec.maxAmmo) * 0.6 * ammoUrgency(me);
+}
+
+/** Guns it holds (not fists). */
+function heldGuns(me: PlayerState): number[] {
+  return WEAPONS.map((_, i) => i).filter((i) => i !== FISTS && holds(me, i));
+}
+
+/** How full its guns are, 0..1 on average. */
+export function ammoShare(me: PlayerState): number {
+  const guns = heldGuns(me);
+  if (guns.length === 0) return 0;
+  return guns.reduce((sum, w) => sum + me.ammo[w] / WEAPONS[w].maxAmmo, 0) / guns.length;
+}
+
+/** Nothing left to shoot with, or close to it. */
+export function runningDry(me: PlayerState): boolean {
+  return !hasGunAmmo(me) || ammoShare(me) < LOW_AMMO_SHARE;
+}
+
+function ammoUrgency(me: PlayerState): number {
+  return !hasGunAmmo(me) ? 6 : ammoShare(me) < LOW_AMMO_SHARE ? 3 : 1;
 }
 
 export interface PickupChoice {

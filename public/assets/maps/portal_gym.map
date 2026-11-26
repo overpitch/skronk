@@ -528,6 +528,18 @@
 "amount" "50"
 }
 {
+"classname" "pickup_railgun"
+"origin" "900 0 17"
+}
+{
+"classname" "pickup_rocketlauncher"
+"origin" "448 -448 -239"
+}
+{
+"classname" "pickup_shotgun"
+"origin" "-640 -280 17"
+}
+{
 "classname" "light"
 "origin" "-640 0 420"
 "light" "450"

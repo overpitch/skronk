@@ -25,9 +25,28 @@
     amount(integer) : "Amount" : 50
 ]
 
-@PointClass size(-16 -16 -16, 16 16 16) color(255 200 0) = pickup_ammo : "Ammo pickup"
+@PointClass size(-16 -16 -16, 16 16 16) color(255 200 0) = pickup_ammo : "Ammo box: tops up every gun you hold"
 [
-    amount(integer) : "Amount" : 50
+]
+
+@PointClass size(-16 -16 -16, 16 16 16) color(208 138 64) = pickup_shotgun : "Shotgun"
+[
+    amount(integer) : "Ammo it comes with" : 10
+]
+
+@PointClass size(-16 -16 -16, 16 16 16) color(255 90 58) = pickup_rocketlauncher : "Rocket launcher"
+[
+    amount(integer) : "Ammo it comes with" : 10
+]
+
+@PointClass size(-16 -16 -16, 16 16 16) color(95 230 255) = pickup_railgun : "Railgun"
+[
+    amount(integer) : "Ammo it comes with" : 10
+]
+
+@PointClass size(-16 -16 -16, 16 16 16) color(176 184 200) = pickup_machinegun : "Machine gun ammo (everyone starts with the gun)"
+[
+    amount(integer) : "Ammo" : 50
 ]
 
 @PointClass size(-8 -8 -8, 8 8 8) color(255 255 160) = light : "Point light"

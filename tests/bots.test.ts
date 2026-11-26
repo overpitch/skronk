@@ -1,3 +1,4 @@
+import { MACHINE_GUN } from "../src/sim/weapons";
 import { describe, expect, it } from "vitest";
 import { set, vec3 } from "../src/math/vec3";
 import { Bot, botSkill } from "../src/bots/bot";
@@ -237,9 +238,9 @@ describe("bots and pickups", () => {
   }
 
   it("goes and gets ammo when it runs out", () => {
-    const { p, runFor } = lone([0, -300, FLOOR], (p) => (p.ammo = 0));
-    runFor(10, () => p.ammo > 0);
-    expect(p.ammo).toBe(50);
+    const { p, runFor } = lone([0, -300, FLOOR], (p) => (p.ammo[MACHINE_GUN] = 0));
+    runFor(10, () => p.ammo[MACHINE_GUN] > 0);
+    expect(p.ammo[MACHINE_GUN]).toBe(50);
   });
 
   it("goes and gets health when it's hurt", () => {
@@ -255,7 +256,7 @@ describe("bots and pickups", () => {
   });
 
   it("skips a pickup that won't be back by the time it gets there", () => {
-    const { world, p } = lone([0, -300, FLOOR], (p) => (p.ammo = 0));
+    const { world, p } = lone([0, -300, FLOOR], (p) => (p.ammo[MACHINE_GUN] = 0));
     expect(choosePickup(world, p, nav)?.index).toBe(index("ammo"));
     world.pickups[index("ammo")].availableAtTick = world.tick + 60 * 60;
     expect(choosePickup(world, p, nav)?.index).not.toBe(index("ammo"));

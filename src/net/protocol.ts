@@ -9,6 +9,7 @@ import type { PlayerCommand } from "../sim/command";
 import type { PlayerId, SimEvent } from "../sim/events";
 import type { MatchState } from "../sim/match";
 import type { Portal } from "../sim/portals";
+import type { WeaponId } from "../sim/weapons";
 
 /** The game server's port; browsers on the same network join ws://<host>:GAME_PORT. */
 export const GAME_PORT = 5175;
@@ -27,7 +28,11 @@ export interface PlayerSnap {
   alive: boolean;
   health: number;
   armor: number;
-  ammo: number;
+  /** Weapon in hand (index), weapons held (bitmask), ammo per weapon, trigger held. */
+  weapon: number;
+  weapons: number;
+  ammo: number[];
+  firing: boolean;
   frags: number;
   deaths: number;
   respawnTick: number;
@@ -44,6 +49,7 @@ export interface ProjectileSnap {
   prev: V3;
   velocity: V3;
   hops: number;
+  weapon: WeaponId;
 }
 
 /** Everything a client needs to draw one tick of the world. */

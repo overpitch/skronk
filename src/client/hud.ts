@@ -6,6 +6,10 @@ import type { PlayerId, SimEvent } from "../sim/events";
 import { TICK_RATE, type PlayerState, type World } from "../sim/world";
 import { portalColorCss } from "../render/portalColors";
 import { AUTO_REMATCH_TICKS, describeRules, REMATCH_READY_TICKS, ticksLeft } from "../sim/match";
+import { canFire, holds, WEAPONS, weaponIndex } from "../sim/weapons";
+
+/** What a pickup is called on screen. */
+const pickupName = (kind: string) => WEAPONS[weaponIndex(kind)]?.name ?? kind;
 
 /** The clock turns orange in the last minute, or when someone is this close to the frag limit. */
 const URGENT_TICKS = 60 * TICK_RATE;
@@ -21,6 +25,9 @@ export class Hud {
   private health = el("hud-health");
   private armor = el("hud-armor");
   private ammo = el("hud-ammo");
+  private weaponName = el("hud-weapon");
+  private weaponBar = el("weapon-bar");
+  private barText = "";
   private frags = el("hud-frags");
   private marker = el("hitmarker");
   private flash = el("damage-flash");
@@ -70,7 +77,7 @@ export class Hud {
       if (e.type === "suddenDeath") this.say("Sudden death: the next frag wins", 3);
       if (e.type === "matchStart") this.say("Fight!", 1.2);
       if (e.type === "pickup" && e.player === me.id) {
-        this.note.textContent = `+ ${e.kind}`;
+        this.note.textContent = `+ ${pickupName(e.kind)}`;
         this.noteTime = 1.2;
       }
     }
@@ -103,10 +110,28 @@ export class Hud {
 
     setText(this.health, String(Math.max(0, me.health)));
     setText(this.armor, String(me.armor));
-    setText(this.ammo, String(me.ammo));
+    const spec = WEAPONS[me.weapon];
+    const ammo = me.ammo[me.weapon];
+    setText(this.weaponName, spec.name.toUpperCase());
+    setText(this.ammo, spec.ammoPerShot > 0 ? String(ammo) : "");
+    this.updateWeaponBar(me);
     setText(this.frags, `FRAGS ${me.frags}`);
     this.health.classList.toggle("low", me.health <= 25);
-    this.ammo.classList.toggle("low", me.ammo <= 20);
+    this.ammo.classList.toggle("low", spec.ammoPerShot > 0 && ammo <= spec.maxAmmo * 0.1);
+  }
+
+  /** One box per slot: key, name and ammo; the weapon in hand lit, ones you don't hold faint. */
+  private updateWeaponBar(me: PlayerState) {
+    const parts = WEAPONS.map((w, i) => {
+      const held = holds(me, i);
+      const cls = ["slot", i === me.weapon ? "current" : "", held ? "" : "missing", held && !canFire(me, i) ? "empty" : ""].filter(Boolean).join(" ");
+      const ammo = w.ammoPerShot > 0 && held ? ` ${me.ammo[i]}` : "";
+      return `<span class="${cls}"><span class="key">${i + 1}</span>${w.name}${ammo}</span>`;
+    });
+    const markup = parts.join("");
+    if (markup === this.barText) return;
+    this.barText = markup;
+    this.weaponBar.innerHTML = markup;
   }
 
   /** The clock and frag race at the top, spawn protection, and the end screen. */

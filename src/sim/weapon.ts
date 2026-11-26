@@ -1,24 +1,13 @@
 /**
- * The one weapon: primary fire shoots fast projectiles. They are simulated
- * every tick rather than hitscan, so they can cross portals the same way
- * players do (milestone 3).
+ * Shared shot pieces: vitals, projectiles and the geometry helpers. What each
+ * weapon does is in weapons.ts. Projectiles are simulated every tick rather
+ * than hitscan, so they can cross portals the same way players do.
  */
 import { set, type Vec3 } from "../math/vec3";
-import { secondsToTicks, TICK_RATE } from "./tick";
+import { secondsToTicks } from "./tick";
+import type { WeaponId } from "./weapons";
 
-export const WEAPON = {
-  damage: 10,
-  /** Ticks between shots: 7 at 60 Hz, about 8.6 shots per second. */
-  fireIntervalTicks: Math.max(1, Math.round(0.12 * TICK_RATE)),
-  /** Map units per second. */
-  projectileSpeed: 3000,
-  /** Players' hit boxes are grown by this much, so near misses by a hair still count. */
-  projectileRadius: 3,
-  /** Horizontal speed added to a player per hit, along the shot direction. */
-  knockback: 30,
-  startAmmo: 100,
-  maxAmmo: 200,
-};
+export { WEAPON } from "./weapons";
 
 export const VITALS = {
   startHealth: 100,
@@ -38,6 +27,8 @@ export interface Projectile {
   velocity: Vec3;
   /** Portals passed through. After the first, the shot can hit whoever fired it. */
   hops: number;
+  /** What fired it (the machine gun's bullets, rockets). */
+  weapon: WeaponId;
 }
 
 /** Unit vector for yaw (0 = +X, counter-clockwise) and pitch (positive = up). */

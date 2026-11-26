@@ -3,6 +3,7 @@ import { vec3, set } from "../src/math/vec3";
 import { emptyCommand, type PlayerCommand } from "../src/sim/command";
 import type { SimEvent } from "../src/sim/events";
 import { segmentVsBox, VITALS, WEAPON } from "../src/sim/weapon";
+import { FISTS, MACHINE_GUN, SPAWN_AMMO } from "../src/sim/weapons";
 import { World, type PlayerState } from "../src/sim/world";
 import { loadTestMap } from "./helpers";
 
@@ -57,9 +58,9 @@ describe("segmentVsBox", () => {
 describe("weapon", () => {
   it("fires at the set rate and spends ammo", () => {
     const { world, a } = duel();
-    const shots = run(world, WEAPON.fireIntervalTicks + 1, { 1: aim(Math.PI / 2) }).filter((e) => e.type === "fire");
+    const shots = run(world, WEAPON.fireTicks + 1, { 1: aim(Math.PI / 2) }).filter((e) => e.type === "fire");
     expect(shots).toHaveLength(2);
-    expect(a.ammo).toBe(WEAPON.startAmmo - 2);
+    expect(a.ammo[MACHINE_GUN]).toBe(SPAWN_AMMO - 2);
   });
 
   it("stops at walls and reports the impact", () => {
@@ -100,7 +101,7 @@ describe("weapon", () => {
     const { world, a, b } = duel();
     b.health = WEAPON.damage;
     const events = [...run(world, 1, { 1: aim(0) }), ...run(world, 20)];
-    expect(events).toContainEqual({ type: "kill", attacker: 1, victim: 2 });
+    expect(events).toContainEqual({ type: "kill", attacker: 1, victim: 2, weapon: "machinegun" });
     expect(b.alive).toBe(false);
     expect(a.frags).toBe(1);
     expect(b.deaths).toBe(1);
@@ -108,14 +109,16 @@ describe("weapon", () => {
     expect(later).toContainEqual({ type: "respawn", player: 2 });
     expect(b.alive).toBe(true);
     expect(b.health).toBe(VITALS.startHealth);
-    expect(b.ammo).toBe(WEAPON.startAmmo);
+    expect(b.ammo[MACHINE_GUN]).toBe(SPAWN_AMMO);
   });
 
-  it("dry fires when out of ammo", () => {
+  it("dry fires when out of ammo, and puts up the fists", () => {
     const { world, a } = duel();
-    a.ammo = 0;
+    a.ammo[MACHINE_GUN] = 0;
     const events = run(world, 1, { 1: aim(0) });
     expect(events).toContainEqual({ type: "dryFire", player: 1 });
+    expect(events).toContainEqual({ type: "weaponSwitch", player: 1, weapon: "fists" });
+    expect(a.weapon).toBe(FISTS);
     expect(world.projectiles).toHaveLength(0);
   });
 });
@@ -143,10 +146,10 @@ describe("pickups", () => {
     const a = world.addPlayer(1);
     const pk = world.pickups.find((p) => p.kind === "ammo")!;
     place(a, pk.origin.x, pk.origin.y);
-    a.ammo = WEAPON.maxAmmo;
+    a.ammo[MACHINE_GUN] = WEAPON.maxAmmo;
     expect(run(world, 1).some((e) => e.type === "pickup")).toBe(false);
-    a.ammo = 10;
+    a.ammo[MACHINE_GUN] = 10;
     run(world, 1);
-    expect(a.ammo).toBe(10 + pk.amount);
+    expect(a.ammo[MACHINE_GUN]).toBe(10 + WEAPON.boxAmmo);
   });
 });

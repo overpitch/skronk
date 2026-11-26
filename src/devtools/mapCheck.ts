@@ -6,6 +6,7 @@
  * Errors break the map (no way to spawn); warnings are things you probably
  * didn't mean (a gap to the outside, a pickup bots can't reach); notes are FYI.
  */
+import { KNOWN_PICKUPS } from "../sim/pickups";
 import { vec3, type Vec3 } from "../math/vec3";
 import type { LevelData, Surface } from "../level/types";
 import { buildNavGraph, type NavGraph } from "../bots/nav";
@@ -29,7 +30,7 @@ export interface CheckOptions {
   nav?: NavGraph;
 }
 
-const KNOWN_PICKUPS = new Set(["health", "armor", "ammo"]);
+const KNOWN = new Set(KNOWN_PICKUPS);
 /** Flood fill cell size for finding gaps to the outside, and the most cells it will try. */
 const LEAK_CELL = 32;
 const LEAK_MAX_CELLS = 400_000;
@@ -58,8 +59,8 @@ export async function checkLevel(level: LevelData, options: CheckOptions = {}): 
 
   // Pickups: known kinds, not buried.
   for (const pk of level.pickups) {
-    if (!KNOWN_PICKUPS.has(pk.kind)) {
-      issues.push({ level: "warning", message: `pickup_${pk.kind} at ${fmt(pk.origin)} isn't a kind the game knows (health, armor, ammo); it's shown but can't be picked up.`, at: pk.origin });
+    if (!KNOWN.has(pk.kind)) {
+      issues.push({ level: "warning", message: `pickup_${pk.kind} at ${fmt(pk.origin)} isn't a kind the game knows (${KNOWN_PICKUPS.join(", ")}); it's shown but can't be picked up.`, at: pk.origin });
     }
     const box = vec3(16, 16, 16);
     if (collision.traceBox(pk.origin, pk.origin, vec3(-box.x, -box.y, -box.z), box).startSolid) {

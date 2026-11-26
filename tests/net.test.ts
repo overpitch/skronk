@@ -18,8 +18,9 @@ import { loadTestMap } from "./helpers";
 
 describe("joining and commands from outside", () => {
   it("cleans up commands from the network", () => {
-    const c = sanitizeCommand({ forward: 5, right: -Infinity, yaw: "x", pitch: 9, jump: "yes", fire: true, extra: 1 });
-    expect(c).toEqual({ forward: 1, right: 0, yaw: 0, pitch: (89 * Math.PI) / 180, jump: false, sprint: false, fire: true, portal: false });
+    const c = sanitizeCommand({ forward: 5, right: -Infinity, yaw: "x", pitch: 9, jump: "yes", fire: true, weapon: 3.7, extra: 1 });
+    expect(c).toEqual({ forward: 1, right: 0, yaw: 0, pitch: (89 * Math.PI) / 180, jump: false, sprint: false, fire: true, portal: false, weapon: 3 });
+    expect(sanitizeCommand({ weapon: -4 }).weapon).toBe(0);
     expect(sanitizeCommand(null)).toEqual(emptyCommand());
     expect(Number.isFinite(sanitizeCommand({ yaw: 1e300 }).yaw)).toBe(true);
   });

@@ -3,12 +3,17 @@
  * player. The client owns the view angles; the sim just receives them.
  */
 import { emptyCommand, type PlayerCommand } from "../sim/command";
+import { WEAPON_COUNT } from "../sim/weapons";
 
 const MOUSE_SENSITIVITY = 0.0022; // radians per pixel
 const PAD_DEADZONE = 0.15;
 const PAD_YAW_RATE = 4.0; // radians per second at full stick
 const PAD_PITCH_RATE = 2.6;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
+/** Wheel travel for one weapon step (a notch on a mouse is about 100; trackpads send many small ones). */
+const WHEEL_STEP = 60;
+/** After this long without wheel movement, a part-way scroll is forgotten. */
+const WHEEL_IDLE_MS = 250;
 
 // Standard Gamepad mapping indices.
 const PAD_A = 0;
@@ -68,6 +73,10 @@ export class LocalInput {
    * button "held" forever and blocked every later shot.
    */
   private portalPresses = 0;
+  /** A weapon change asked for since the sim last read a command: a slot (1 = fists), or a step up/down the slots. */
+  private weaponRequest: { slot: number } | { cycle: number } | null = null;
+  private wheel = 0;
+  private wheelAt = 0;
   private mouseButtons = 0;
   private pad = { forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false };
   /** Left stick click toggles sprint on; it ends when you stop pushing forward. */
@@ -88,6 +97,9 @@ export class LocalInput {
       this.keys.add(e.code);
       if (e.code === "Tab") e.preventDefault(); // held for the scoreboard, not moving focus
       if (e.code === "KeyE" && !e.repeat) this.portalPresses++;
+      // Number keys pick a weapon by slot.
+      const digit = /^Digit([1-9])$/.exec(e.code);
+      if (digit && !e.repeat && Number(digit[1]) <= WEAPON_COUNT) this.weaponRequest = { slot: Number(digit[1]) };
       if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
@@ -95,6 +107,7 @@ export class LocalInput {
       this.keys.clear();
       this.mouseButtons = 0;
       this.portalPresses = 0;
+      this.weaponRequest = null;
     });
 
     canvas.addEventListener("click", () => {
@@ -116,6 +129,23 @@ export class LocalInput {
     });
     document.addEventListener("mouseup", (e) => (this.mouseButtons = e.buttons));
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Mouse wheel: down for the next weapon, up for the one before.
+    document.addEventListener(
+      "wheel",
+      (e) => {
+        if (document.pointerLockElement !== canvas) return;
+        e.preventDefault();
+        const now = performance.now();
+        if (now - this.wheelAt > WHEEL_IDLE_MS) this.wheel = 0;
+        this.wheelAt = now;
+        this.wheel += e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY;
+        if (Math.abs(this.wheel) >= WHEEL_STEP) {
+          this.weaponRequest = { cycle: Math.sign(this.wheel) };
+          this.wheel = 0;
+        }
+      },
+      { passive: false },
+    );
   }
 
   /** Tab or the controller's View button held: show the scoreboard. */
@@ -162,6 +192,10 @@ export class LocalInput {
       else if (otherJustPressed()) this.onActivate();
     } else if (justPressed(PAD_MENU)) {
       this.onDeactivate();
+    } else if (justPressed(PAD_LB)) {
+      this.weaponRequest = { cycle: -1 };
+    } else if (justPressed(PAD_RB)) {
+      this.weaponRequest = { cycle: 1 };
     }
     if (!menuOpen && justPressed(PAD_L3)) this.padSprint = !this.padSprint;
     this.padPrev = pad.buttons.map((b) => b.pressed);
@@ -199,6 +233,13 @@ export class LocalInput {
       // E as well as right click: two-finger clicks are awkward on a trackpad mid-fight.
       portal: this.takePortalPress() || this.pad.portal,
     };
+  }
+
+  /** The weapon change asked for since the last call (number key, wheel, LB/RB), or null. */
+  takeWeaponRequest(): { slot: number } | { cycle: number } | null {
+    const r = this.weaponRequest;
+    this.weaponRequest = null;
+    return r;
   }
 
   /** True for one command per press, so the sim sees a press then a release. */

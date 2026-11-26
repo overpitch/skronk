@@ -2,7 +2,7 @@
  * The simulation. Owns all game state and advances it one fixed tick at a time
  * from player commands. No rendering, DOM or network code belongs here.
  */
-import { add, addScaled, clone, copy, dot, normalize, scale, vec3, type Vec3 } from "../math/vec3";
+import { add, addScaled, clone, copy, cross, dot, normalize, scale, sub, vec3, type Vec3 } from "../math/vec3";
 import type { CollisionBrush, LevelData, SpawnPoint } from "../level/types";
 import { CollisionWorld, type Tracer } from "./collision";
 import { emptyCommand, type PlayerCommand } from "./command";
@@ -28,7 +28,8 @@ import {
   type PortalSlot,
 } from "./portals";
 import { TICK_DT } from "./tick";
-import { segmentVsBox, viewDirection, VITALS, WEAPON, type Projectile } from "./weapon";
+import { segmentVsBox, viewDirection, VITALS, type Projectile } from "./weapon";
+import { pelletOffsets, startingArms, switchWeapon, triggerTick, weaponById, WEAPONS, type Armed, type WeaponSpec, type WeaponId } from "./weapons";
 
 export { TICK_DT, TICK_RATE } from "./tick";
 export type { PlayerId } from "./events";
@@ -51,8 +52,29 @@ const PITCH_LIMIT = (89 * Math.PI) / 180;
 const SEEN_SPAWN_FACTOR = 0.25;
 /** Spawns scoring at least this share of the best one are all fair picks (so the choice isn't predictable). */
 const GOOD_SPAWN_SHARE = 0.6;
+/** An instant shot goes through at most this many portals. */
+const MAX_HITSCAN_HOPS = 8;
+const BODY_MIDDLE = (PLAYER_MINS.z + PLAYER_MAXS.z) / 2;
 
-export interface PlayerState extends MoveState {
+/** What a shot moving in a straight line reaches first. */
+type Sweep =
+  | { kind: "portal"; t: number; from: Portal; to: Portal }
+  | { kind: "player"; t: number; victim: PlayerState }
+  | { kind: "wall"; t: number; pos: Vec3; normal: Vec3 }
+  | { kind: "none" };
+
+/** An instant shot's path, in pieces where it went through portals. */
+interface ShotPath {
+  segments: [Vec3, Vec3][];
+  end: Vec3;
+  /** Direction at the end (turned by any portals). */
+  dir: Vec3;
+  victim: PlayerState | null;
+  /** Set if it stopped at a wall. */
+  wallNormal: Vec3 | null;
+}
+
+export interface PlayerState extends MoveState, Armed {
   id: PlayerId;
   yaw: number;
   pitch: number;
@@ -62,9 +84,8 @@ export interface PlayerState extends MoveState {
   alive: boolean;
   health: number;
   armor: number;
-  ammo: number;
-  /** Ticks until the weapon can fire again. */
-  fireCooldown: number;
+  /** Trigger held last tick. */
+  firing: boolean;
   /** While dead: the tick to respawn on. */
   respawnTick: number;
   frags: number;
@@ -142,8 +163,9 @@ export class World {
       alive: true,
       health: 0,
       armor: 0,
-      ammo: 0,
+      ...startingArms(),
       fireCooldown: 0,
+      firing: false,
       respawnTick: 0,
       frags: 0,
       deaths: 0,
@@ -211,7 +233,7 @@ export class World {
     p.alive = true;
     p.health = VITALS.startHealth;
     p.armor = 0;
-    p.ammo = WEAPON.startAmmo;
+    Object.assign(p, startingArms());
     // The gun comes up a moment after spawning, so a click held from before (asking for a rematch, say) doesn't fire.
     p.fireCooldown = SPAWN_RAISE_TICKS;
     p.protectedUntil = this.tick + SPAWN_PROTECTION_TICKS;
@@ -292,29 +314,100 @@ export class World {
   /** The portal trip from the last movePlayer() that returned true. */
   lastTeleport: Extract<SimEvent, { type: "teleport" }> | null = null;
 
+  /** The trigger: switching, ammo, and the shot itself (melee, a projectile, or an instant shot). */
   private updateWeapon(p: PlayerState, cmd: PlayerCommand) {
-    if (p.fireCooldown > 0) p.fireCooldown--;
-    if (!cmd.fire || p.fireCooldown > 0) return;
-    if (p.ammo <= 0) {
-      p.fireCooldown = WEAPON.fireIntervalTicks * 2;
-      this.events.push({ type: "dryFire", player: p.id });
-      return;
-    }
-    p.ammo--;
-    p.fireCooldown = WEAPON.fireIntervalTicks;
+    const was = p.weapon;
+    const trigger = triggerTick(p, cmd);
+    p.firing = cmd.fire;
+    if (p.weapon !== was) this.events.push({ type: "weaponSwitch", player: p.id, weapon: WEAPONS[p.weapon].id });
+    if (trigger.dry) this.events.push({ type: "dryFire", player: p.id });
+    if (!trigger.fired) return;
     p.protectedUntil = 0; // shooting gives up spawn protection
+    const spec = WEAPONS[p.weapon];
     const eye = vec3(p.origin.x, p.origin.y, p.origin.z + EYE_HEIGHT);
     const dir = viewDirection(p.yaw, p.pitch, vec3());
+    const projectile = spec.shot === "projectile" ? this.launch(p, spec, eye, dir) : -1;
+    this.events.push({ type: "fire", player: p.id, weapon: spec.id, projectile, origin: clone(eye), dir: clone(dir) });
+    if (spec.shot === "hitscan") this.fireInstant(p, spec, eye, dir);
+    else if (spec.shot === "melee") this.punch(p, spec, eye, dir);
+  }
+
+  private launch(p: PlayerState, spec: WeaponSpec, eye: Vec3, dir: Vec3): number {
     const projectile: Projectile = {
       id: this.nextProjectileId++,
       owner: p.id,
-      origin: eye,
+      origin: clone(eye),
       prevOrigin: clone(eye),
-      velocity: scale(dir, WEAPON.projectileSpeed),
+      velocity: scale(dir, spec.speed),
       hops: 0,
+      weapon: spec.id,
     };
     this.projectiles.push(projectile);
-    this.events.push({ type: "fire", player: p.id, projectile: projectile.id, origin: clone(eye), dir });
+    return projectile.id;
+  }
+
+  /** Shotgun and railgun: every pellet arrives at once, through portals. A blast's pellets on one player count as one hit. */
+  private fireInstant(p: PlayerState, spec: WeaponSpec, eye: Vec3, dir: Vec3) {
+    const right = vec3(Math.sin(p.yaw), -Math.cos(p.yaw), 0);
+    const up = cross(right, dir);
+    const turn = (hash3(this.tick, p.id, 7) % 6283) / 1000;
+    const struck = new Map<PlayerState, { pellets: number; pos: Vec3; dir: Vec3 }>();
+    for (const [r, u] of pelletOffsets(spec, turn)) {
+      const d = normalize(vec3(dir.x + right.x * r + up.x * u, dir.y + right.y * r + up.y * u, dir.z + right.z * r + up.z * u));
+      const path = this.traceShot(p.id, eye, d, spec.range, spec.radius);
+      if (spec.pellets === 1) this.events.push({ type: "trail", player: p.id, weapon: spec.id, segments: path.segments });
+      if (path.victim) {
+        const s = struck.get(path.victim);
+        if (s) s.pellets++;
+        else struck.set(path.victim, { pellets: 1, pos: path.end, dir: path.dir });
+      } else if (path.wallNormal) {
+        this.events.push({ type: "impact", projectile: -1, owner: p.id, weapon: spec.id, pos: path.end, normal: path.wallNormal });
+      }
+    }
+    for (const [victim, s] of struck) this.strike(victim, p.id, spec, spec.damage * s.pellets, s.pos, s.dir, -1, s.pellets);
+  }
+
+  /** Fists: a hit up close, or a punch off a wall or floor that pushes you away from it. */
+  private punch(p: PlayerState, spec: WeaponSpec, eye: Vec3, dir: Vec3) {
+    const path = this.traceShot(p.id, eye, dir, spec.range, spec.radius);
+    if (path.victim) {
+      this.strike(path.victim, p.id, spec, spec.damage, path.end, path.dir, -1);
+    } else if (path.wallNormal) {
+      addScaled(p.velocity, dir, -spec.recoil, p.velocity);
+      this.events.push({ type: "impact", projectile: -1, owner: p.id, weapon: spec.id, pos: path.end, normal: path.wallNormal });
+    }
+  }
+
+  /**
+   * An instant shot from `start` along `dir`: through linked portals (turning as
+   * it goes) until it reaches a player or a wall, or `range` runs out.
+   */
+  private traceShot(owner: PlayerId, start: Vec3, dir: Vec3, range: number, radius: number): ShotPath {
+    const segments: [Vec3, Vec3][] = [];
+    let from = clone(start);
+    const d = clone(dir);
+    let left = range;
+    for (let hops = 0; ; hops++) {
+      const delta = scale(d, left);
+      const s = this.sweep(from, delta, owner, hops, radius);
+      if (s.kind === "portal" && hops < MAX_HITSCAN_HOPS) {
+        const pos = addScaled(from, delta, s.t);
+        segments.push([from, pos]);
+        from = addScaled(throughPortalPoint(pos, s.from, s.to), s.to.normal, 0.01);
+        throughPortalDir(d, s.from, s.to, d);
+        left *= 1 - s.t;
+        continue;
+      }
+      const end = s.kind === "none" ? add(from, delta) : addScaled(from, delta, s.t);
+      segments.push([from, end]);
+      return {
+        segments,
+        end,
+        dir: d,
+        victim: s.kind === "player" ? s.victim : null,
+        wallNormal: s.kind === "wall" ? s.normal : null,
+      };
+    }
   }
 
   /** Secondary trigger: one portal shot per press into the owner's next slot, replacing the older end if it lands. */
@@ -481,82 +574,95 @@ export class World {
     p.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, Math.asin(Math.max(-1, Math.min(1, look.z)))));
   }
 
-  /** Moves every projectile one tick; the first thing it touches, wall or player, stops it. */
-  private stepProjectiles() {
-    const delta = vec3();
-    const end = vec3();
+  /**
+   * What a shot moving from `origin` by `delta` reaches first: a linked portal's
+   * opening, a player (boxes grown by `radius`; not the shooter until it has been
+   * through a portal), or a wall. `t` is the fraction of `delta` travelled.
+   */
+  private sweep(origin: Vec3, delta: Vec3, owner: PlayerId, hops: number, radius: number): Sweep {
+    const end = add(origin, delta);
     const boxMin = vec3();
     const boxMax = vec3();
-    const r = WEAPON.projectileRadius;
+    const tr = this.collision.traceBox(origin, end, POINT, POINT);
+    const wallT = tr.startSolid ? 0 : tr.fraction;
+    let hitT = wallT;
+    let victim: PlayerState | null = null;
+    for (const p of this.players.values()) {
+      if ((p.id === owner && hops === 0) || !p.alive) continue;
+      add(p.origin, PLAYER_MINS, boxMin);
+      add(p.origin, PLAYER_MAXS, boxMax);
+      boxMin.x -= radius; boxMin.y -= radius; boxMin.z -= radius;
+      boxMax.x += radius; boxMax.y += radius; boxMax.z += radius;
+      const t = segmentVsBox(origin, delta, boxMin, boxMax);
+      if (t >= 0 && t <= hitT) {
+        hitT = t;
+        victim = p;
+      }
+    }
+
+    // A linked portal opening reached before anything else? The wall behind it is
+    // hit at the same spot (the trace stops a hair short), so allow a quarter unit of slack.
+    let portalT = Infinity;
+    let from: Portal | null = null;
+    let to: Portal | null = null;
+    const slack = 0.25 / Math.max(1e-6, Math.hypot(delta.x, delta.y, delta.z));
+    for (const pt of this.portals) {
+      const t = segmentIntoPortal(origin, delta, pt);
+      if (t === null || t >= portalT || t > hitT + slack || (victim && t >= hitT)) continue;
+      const partner = this.linkedPortal(pt);
+      if (!partner) continue;
+      portalT = t;
+      from = pt;
+      to = partner;
+    }
+    if (from && to) return { kind: "portal", t: portalT, from, to };
+    if (victim) return { kind: "player", t: hitT, victim };
+    if (wallT < 1) return { kind: "wall", t: wallT, pos: clone(tr.endPos), normal: clone(tr.normal) };
+    return { kind: "none" };
+  }
+
+  /** Moves every projectile one tick; the first thing it touches, wall or player, stops it (a rocket goes off). */
+  private stepProjectiles() {
+    const delta = vec3();
     let kept = 0;
 
     for (const pr of this.projectiles) {
       copy(pr.prevOrigin, pr.origin);
+      const spec = weaponById(pr.weapon);
       // Fraction of this tick's travel still to go; a portal hop spends part of it.
       let left = 1;
-      let done = false;
       let gone = false;
-      for (let hop = 0; hop <= MAX_SHOT_HOPS_PER_TICK && !done; hop++) {
+      for (let hop = 0; hop <= MAX_SHOT_HOPS_PER_TICK; hop++) {
         scale(pr.velocity, TICK_DT * left, delta);
-        add(pr.origin, delta, end);
-
-        const tr = this.collision.traceBox(pr.origin, end, POINT, POINT);
-        const wallT = tr.startSolid ? 0 : tr.fraction;
-        let hitT = wallT;
-        let victim: PlayerState | null = null;
-        for (const p of this.players.values()) {
-          if ((p.id === pr.owner && pr.hops === 0) || !p.alive) continue;
-          add(p.origin, PLAYER_MINS, boxMin);
-          add(p.origin, PLAYER_MAXS, boxMax);
-          boxMin.x -= r; boxMin.y -= r; boxMin.z -= r;
-          boxMax.x += r; boxMax.y += r; boxMax.z += r;
-          const t = segmentVsBox(pr.origin, delta, boxMin, boxMax);
-          if (t >= 0 && t <= hitT) {
-            hitT = t;
-            victim = p;
-          }
-        }
-
-        // A linked portal opening reached before anything else? The wall behind it is
-        // hit at the same spot (the trace stops a hair short), so allow a quarter unit of slack.
-        let portalT = Infinity;
-        let from: Portal | null = null;
-        let to: Portal | null = null;
-        const slack = 0.25 / Math.max(1e-6, Math.hypot(delta.x, delta.y, delta.z));
-        for (const pt of this.portals) {
-          const t = segmentIntoPortal(pr.origin, delta, pt);
-          if (t === null || t >= portalT || t > hitT + slack || (victim && t >= hitT)) continue;
-          const partner = this.linkedPortal(pt);
-          if (!partner) continue;
-          portalT = t;
-          from = pt;
-          to = partner;
-        }
-
-        if (from && to) {
-          const pos = addScaled(pr.origin, delta, portalT);
-          const exit = addScaled(throughPortalPoint(pos, from, to), to.normal, 0.01);
+        const s = this.sweep(pr.origin, delta, pr.owner, pr.hops, spec.radius);
+        if (s.kind === "portal") {
+          const pos = addScaled(pr.origin, delta, s.t);
+          const exit = addScaled(throughPortalPoint(pos, s.from, s.to), s.to.normal, 0.01);
           copy(pr.origin, exit);
           copy(pr.prevOrigin, exit); // don't draw the tracer across the map
-          throughPortalDir(pr.velocity, from, to, pr.velocity);
+          throughPortalDir(pr.velocity, s.from, s.to, pr.velocity);
           pr.hops++;
-          left *= 1 - portalT;
-          this.events.push({ type: "shotThroughPortal", projectile: pr.id, from: from.id, to: to.id, pos, exit: clone(exit) });
+          left *= 1 - s.t;
+          this.events.push({ type: "shotThroughPortal", projectile: pr.id, from: s.from.id, to: s.to.id, pos, exit: clone(exit) });
           continue;
         }
-
-        done = true;
-        if (victim) {
-          const pos = vec3(pr.origin.x + delta.x * hitT, pr.origin.y + delta.y * hitT, pr.origin.z + delta.z * hitT);
-          if (this.tick < victim.protectedUntil) this.events.push({ type: "shielded", projectile: pr.id, attacker: pr.owner, victim: victim.id, pos });
-          else this.damage(victim, pr.owner, WEAPON.damage, pos, pr);
-          gone = true;
-        } else if (wallT < 1) {
-          this.events.push({ type: "impact", projectile: pr.id, owner: pr.owner, pos: clone(tr.endPos), normal: clone(tr.normal) });
-          gone = true;
-        } else {
-          copy(pr.origin, end);
+        if (s.kind === "none") {
+          add(pr.origin, delta, pr.origin);
+          break;
         }
+        gone = true;
+        const dir = normalize(pr.velocity);
+        if (s.kind === "player") {
+          const pos = addScaled(pr.origin, delta, s.t);
+          if (spec.splash) this.explode(pr.owner, spec, pos, s.victim, pr.id);
+          else this.strike(s.victim, pr.owner, spec, spec.damage, pos, dir, pr.id);
+        } else if (spec.splash) {
+          // Go off just in front of the wall, so the blast's line of sight starts in the open.
+          this.explode(pr.owner, spec, addScaled(s.pos, s.normal, 1), null, pr.id);
+        } else {
+          this.events.push({ type: "impact", projectile: pr.id, owner: pr.owner, weapon: spec.id, pos: s.pos, normal: s.normal });
+        }
+        break;
       }
       // Shots have no lifetime: they fly until they hit something. One that leaves the
       // level (an open sky, a leak in the map) would never hit anything, so it's removed.
@@ -566,24 +672,74 @@ export class World {
     this.projectiles.length = kept;
   }
 
+  /**
+   * A rocket going off at `pos`: a direct hit takes the weapon's full damage; everyone
+   * else in reach, with nothing solid in between, takes splash falling off with distance
+   * and is thrown away from the blast (you too: that's a rocket jump, for less damage).
+   */
+  private explode(owner: PlayerId, spec: WeaponSpec, pos: Vec3, direct: PlayerState | null, projectile: number) {
+    const sp = spec.splash!;
+    this.events.push({ type: "explosion", owner, weapon: spec.id, pos: clone(pos), radius: sp.radius });
+    for (const p of [...this.players.values()]) {
+      if (!p.alive) continue;
+      let factor = 1;
+      if (p !== direct) {
+        const d = distanceToBox(pos, p.origin);
+        if (d >= sp.radius || !this.blastReaches(pos, p)) continue;
+        factor = 1 - d / sp.radius;
+      }
+      const centre = vec3(p.origin.x, p.origin.y, p.origin.z + BODY_MIDDLE);
+      const away = sub(centre, pos);
+      if (Math.hypot(away.x, away.y, away.z) < 1e-3) away.z = 1;
+      const push = scale(normalize(away), sp.knockback * factor);
+      if (this.tick < p.protectedUntil) {
+        this.events.push({ type: "shielded", projectile, attacker: owner, victim: p.id, pos: clone(centre) });
+        continue;
+      }
+      let amount = p === direct ? spec.damage : sp.damage * factor;
+      if (p.id === owner) amount *= sp.selfDamage;
+      this.damage(p, owner, Math.max(1, Math.round(amount)), p === direct ? pos : centre, push, spec.id, projectile);
+    }
+  }
+
+  /** Nothing solid between a blast and some part of the player (middle, feet or head). */
+  private blastReaches(pos: Vec3, p: PlayerState): boolean {
+    for (const z of [BODY_MIDDLE, PLAYER_MINS.z + 2, EYE_HEIGHT]) {
+      const to = vec3(p.origin.x, p.origin.y, p.origin.z + z);
+      if (this.collision.traceBox(pos, to, POINT, POINT).fraction >= 1) return true;
+    }
+    return false;
+  }
+
+  /** A hit from a bullet, pellets (`pellets` of them together) or a punch: damage, and a shove along the shot. */
+  private strike(victim: PlayerState, attacker: PlayerId, spec: WeaponSpec, amount: number, pos: Vec3, dir: Vec3, projectile: number, pellets = 1) {
+    if (this.tick < victim.protectedUntil) {
+      this.events.push({ type: "shielded", projectile, attacker, victim: victim.id, pos: clone(pos) });
+      return;
+    }
+    const flat = normalize(vec3(dir.x, dir.y, 0));
+    const push = vec3(flat.x * spec.knockback * pellets, flat.y * spec.knockback * pellets, spec.lift);
+    this.damage(victim, attacker, amount, pos, push, spec.id, projectile);
+  }
+
   private outsideLevel(v: Vec3): boolean {
     const { mins, maxs } = this.level;
     const m = OUTSIDE_LEVEL_MARGIN;
     return v.x < mins.x - m || v.y < mins.y - m || v.z < mins.z - m || v.x > maxs.x + m || v.y > maxs.y + m || v.z > maxs.z + m;
   }
 
-  private damage(victim: PlayerState, attacker: PlayerId, amount: number, pos: Vec3, pr: Projectile) {
+  /** Damage (armor soaks up its share) and a push (`push` is added to their velocity). */
+  private damage(victim: PlayerState, attacker: PlayerId, amount: number, pos: Vec3, push: Vec3, weapon: WeaponId, projectile: number) {
+    if (!victim.alive) return;
     const saved = Math.min(victim.armor, Math.ceil(amount * VITALS.armorAbsorb));
     victim.armor -= saved;
     victim.health -= amount - saved;
-    const push = normalize(vec3(pr.velocity.x, pr.velocity.y, 0));
-    victim.velocity.x += push.x * WEAPON.knockback;
-    victim.velocity.y += push.y * WEAPON.knockback;
-    this.events.push({ type: "hit", projectile: pr.id, attacker, victim: victim.id, damage: amount, pos });
-    if (victim.health <= 0) this.kill(victim, attacker);
+    add(victim.velocity, push, victim.velocity);
+    this.events.push({ type: "hit", projectile, attacker, victim: victim.id, weapon, damage: amount, pos: clone(pos) });
+    if (victim.health <= 0) this.kill(victim, attacker, weapon);
   }
 
-  private kill(victim: PlayerState, attacker: PlayerId | null) {
+  private kill(victim: PlayerState, attacker: PlayerId | null, weapon: WeaponId | null = null) {
     victim.alive = false;
     victim.health = Math.min(victim.health, 0);
     victim.velocity.x = victim.velocity.y = victim.velocity.z = 0;
@@ -591,7 +747,7 @@ export class World {
     victim.deaths++;
     const killer = attacker === null ? undefined : this.players.get(attacker);
     if (killer && killer !== victim) killer.frags++;
-    this.events.push({ type: "kill", attacker, victim: victim.id });
+    this.events.push({ type: "kill", attacker, victim: victim.id, weapon });
   }
 
   private collectPickups() {
@@ -599,9 +755,14 @@ export class World {
       if (!pk.known || this.tick < pk.availableAtTick) return;
       for (const p of this.players.values()) {
         if (!p.alive || !touchesPickup(p.origin, pk.origin)) continue;
-        if (!applyPickup(p, pk)) continue;
+        const got = applyPickup(p, pk);
+        if (!got.taken) continue;
         pk.availableAtTick = this.tick + pk.respawnTicks;
         this.events.push({ type: "pickup", player: p.id, kind: pk.kind, index });
+        // A weapon you didn't have comes straight up, unless you're busy shooting.
+        if (got.newWeapon >= 0 && !p.firing && switchWeapon(p, got.newWeapon)) {
+          this.events.push({ type: "weaponSwitch", player: p.id, weapon: WEAPONS[p.weapon].id });
+        }
         return;
       }
     });
@@ -665,6 +826,16 @@ function hash3(a: number, b: number, c: number): number {
   h = Math.imul(h ^ b ^ (h >>> 13), 0xc2b2ae35);
   h = Math.imul(h ^ c ^ (h >>> 16), 0x27d4eb2f);
   return (h ^ (h >>> 15)) >>> 0;
+}
+
+/** Distance from a point to a player's box (0 inside it). */
+function distanceToBox(pos: Vec3, origin: Vec3): number {
+  const gap = (v: number, lo: number, hi: number) => Math.max(lo - v, 0, v - hi);
+  return Math.hypot(
+    gap(pos.x, origin.x + PLAYER_MINS.x, origin.x + PLAYER_MAXS.x),
+    gap(pos.y, origin.y + PLAYER_MINS.y, origin.y + PLAYER_MAXS.y),
+    gap(pos.z, origin.z + PLAYER_MINS.z, origin.z + PLAYER_MAXS.z),
+  );
 }
 
 function touchesPickup(origin: Vec3, pickup: Vec3): boolean {

@@ -5,7 +5,7 @@
  * stays fair and network play keeps working.
  *
  * Every visual feature reads its numbers from the profile here, and anything
- * Full-only (shadows from the map's lights, so far) is switched by it. New visual features add a field
+ * Full-only (shadows from the map's lights, explosion lights, smoke trails) is switched by it. New visual features add a field
  * with a value for each mode.
  */
 export type QualityMode = "full" | "light";
@@ -36,6 +36,14 @@ export interface QualityProfile {
   portalSamples: number;
   /** Player bodies with rounded limbs, helmet and armour pieces (else plain blocks). */
   detailedBodies: boolean;
+  /** Weapons (in your hands and theirs) with glow strips, coils and trim (else the plain shapes). */
+  detailedWeapons: boolean;
+  /** Explosions light up the room for a moment (a point light each). */
+  explosionLights: number;
+  /** Rockets leave a smoke trail. */
+  smokeTrails: boolean;
+  /** Railgun trails have a soft glow round the bright core. */
+  beamGlow: boolean;
 }
 
 export const QUALITY: Record<QualityMode, QualityProfile> = {
@@ -52,6 +60,10 @@ export const QUALITY: Record<QualityMode, QualityProfile> = {
     portalViewScale: 1,
     portalSamples: 4,
     detailedBodies: true,
+    detailedWeapons: true,
+    explosionLights: 2,
+    smokeTrails: true,
+    beamGlow: true,
   },
   light: {
     mode: "light",
@@ -66,6 +78,10 @@ export const QUALITY: Record<QualityMode, QualityProfile> = {
     portalViewScale: 0.5,
     portalSamples: 0,
     detailedBodies: false,
+    detailedWeapons: false,
+    explosionLights: 0,
+    smokeTrails: false,
+    beamGlow: false,
   },
 };
 

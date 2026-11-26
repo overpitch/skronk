@@ -16,6 +16,21 @@ import { playerPortalOwner, type PortalOwner, type PortalSlot } from "../sim/por
 import { FIZZLE_COLOR, portalColor } from "./portalColors";
 import { TextureLibrary } from "./textures";
 import { ViewModel } from "./viewmodel";
+import { WEAPONS, type WeaponId } from "../sim/weapons";
+
+/** Pickup shapes and colours: a spinning gem for health, armor and ammo, a little gun for weapons. */
+const PICKUP_COLORS: Record<string, number> = {
+  health: 0xff5050,
+  armor: 0x50a0ff,
+  ammo: 0xffc800,
+  machinegun: 0xb0b8c8,
+  shotgun: 0xd08a40,
+  rocketlauncher: 0xff5a3a,
+  railgun: 0x5fe6ff,
+};
+/** View punch per shot, radians. */
+const SHOT_PUNCH: Record<WeaponId, number> = { fists: 0.004, machinegun: 0.006, shotgun: 0.03, rocketlauncher: 0.014, railgun: 0.024 };
+const RAIL_COLOR = 0x7ff0ff;
 
 const HORIZONTAL_FOV_DEG = 100;
 /** Extra horizontal FOV at full sprint speed and above (portal flings too), so speed reads on screen. */
@@ -53,9 +68,9 @@ export class GameRenderer {
   private lookTarget = new THREE.Vector3();
   private effects: Effects;
   private players: PlayerModels;
-  private viewModel = new ViewModel();
+  private viewModel: ViewModel;
   private portals: PortalViews;
-  private pickupMeshes: THREE.Mesh[] = [];
+  private pickupMeshes: THREE.Object3D[] = [];
   /** Local shots: offset from true path to the gun muzzle at the moment of firing. */
   private tracerOffsets = new Map<number, { offset: THREE.Vector3; born: number }>();
   /** Visual-only camera kick in radians (pitch up), from firing and taking hits. */
@@ -89,8 +104,9 @@ export class GameRenderer {
     this.camera.up.set(0, 0, 1);
     this.scene.background = new THREE.Color(0x0b0d12);
     this.textures = new TextureLibrary(textureRoot, Math.min(quality.anisotropy, this.renderer.capabilities.getMaxAnisotropy()));
-    this.effects = new Effects(this.scene);
-    this.players = new PlayerModels(this.scene, quality.detailedBodies, quality.shadows);
+    this.effects = new Effects(this.scene, quality);
+    this.players = new PlayerModels(this.scene, quality.detailedBodies, quality.shadows, quality.detailedWeapons);
+    this.viewModel = new ViewModel(quality.detailedWeapons);
     this.portals = new PortalViews(this.scene, {
       maxViews: quality.maxPortalViews,
       scale: quality.portalViewScale,
@@ -154,13 +170,12 @@ export class GameRenderer {
       this.scene.add(light);
     });
 
-    // Pickup markers: placeholder shapes so map authors can see where they are.
-    const colors: Record<string, number> = { health: 0xff5050, armor: 0x50a0ff, ammo: 0xffc800 };
+    // Pickups: placeholder shapes so map authors (and players) can tell them apart.
     for (const p of level.pickups) {
-      const mesh = new THREE.Mesh(
-        new THREE.OctahedronGeometry(10),
-        new THREE.MeshLambertMaterial({ color: colors[p.kind] ?? 0xffffff, emissive: colors[p.kind] ?? 0xffffff, emissiveIntensity: 0.4 }),
-      );
+      const color = PICKUP_COLORS[p.kind] ?? 0xffffff;
+      const mat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.4 });
+      const isWeapon = WEAPONS.some((w) => w.id === p.kind);
+      const mesh = isWeapon ? weaponPickupShape(mat) : new THREE.Mesh(new THREE.OctahedronGeometry(10), mat);
       mesh.position.set(p.origin.x, p.origin.y, p.origin.z);
       mesh.userData.baseZ = p.origin.z;
       this.scene.add(mesh);
@@ -235,12 +250,14 @@ export class GameRenderer {
         onGround: p.onGround,
         alive: p.alive,
         shielded: world.tick < p.protectedUntil,
+        weapon: WEAPONS[p.weapon]?.id ?? "machinegun",
       });
     }
     this.players.update(dt);
 
-    // Tracers: interpolated, with local shots easing in from the gun muzzle.
+    // Tracers and rockets: interpolated, with local shots easing in from the gun muzzle.
     const tracers: { head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[] = [];
+    const rockets: { id: number; head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[] = [];
     const live = new Set<number>();
     for (const pr of world.projectiles) {
       live.add(pr.id);
@@ -256,10 +273,11 @@ export class GameRenderer {
         head.addScaledVector(conv.offset, Math.max(0, 1 - age / TRACER_CONVERGE_SECONDS));
         travelled = age * Math.hypot(pr.velocity.x, pr.velocity.y, pr.velocity.z);
       }
-      tracers.push({ head, dir, travelled });
+      if (pr.weapon === "rocketlauncher") rockets.push({ id: pr.id, head, dir, travelled });
+      else tracers.push({ head, dir, travelled });
     }
     for (const id of this.tracerOffsets.keys()) if (!live.has(id)) this.tracerOffsets.delete(id);
-    this.effects.update(dt, tracers);
+    this.effects.update(dt, tracers, rockets);
 
     // Pickups: hidden while waiting to respawn.
     world.pickups.forEach((pk, i) => {
@@ -279,7 +297,7 @@ export class GameRenderer {
       this.fovKick = eased;
       this.applyFov();
     }
-    this.viewModel.update(dt, speed, !!me?.onGround, !!me?.alive);
+    this.viewModel.update(dt, speed, !!me?.onGround, !!me?.alive, WEAPONS[me?.weapon ?? 1]?.id ?? "machinegun");
 
     if (this.quality.shadows) this.renderer.shadowMap.needsUpdate = true;
     this.portals.renderViews(this.renderer, this.camera, world.portals, (p) => world.linkedPortal(p));
@@ -302,12 +320,13 @@ export class GameRenderer {
     this.scene.add(this.debugLines);
   }
 
-  /** Your gun going off: kick, view punch and muzzle flash. */
-  localShot() {
-    this.viewModel.fire();
-    this.punchPitch += 0.006;
-    this.punchYaw += (Math.random() - 0.5) * 0.004;
-    this.effects.muzzleFlash(this.muzzle(this.v2));
+  /** Your weapon going off: kick, view punch and muzzle flash (a punch has no flash). */
+  localShot(weapon: WeaponId) {
+    this.viewModel.fire(weapon);
+    const punch = SHOT_PUNCH[weapon];
+    this.punchPitch += punch;
+    this.punchYaw += (Math.random() - 0.5) * punch * 0.7;
+    if (weapon !== "fists") this.effects.muzzleFlash(this.muzzle(this.v2));
   }
 
   /** World position of the gun muzzle for the current view. */
@@ -346,7 +365,8 @@ export class GameRenderer {
         case "fire":
           this.players.fired(e.player);
           if (e.player !== localId) break;
-          if (!predictedFire) this.localShot();
+          if (!predictedFire) this.localShot(e.weapon);
+          if (e.projectile < 0) break;
           this.muzzle(this.v1);
           // The shot really leaves the eye; draw it leaving the gun and drift onto the true path.
           this.tracerOffsets.set(e.projectile, {
@@ -354,12 +374,24 @@ export class GameRenderer {
             born: now,
           });
           break;
-        case "impact":
-          this.effects.wallImpact(
-            new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z),
-            new THREE.Vector3(e.normal.x, e.normal.y, e.normal.z),
-          );
+        case "impact": {
+          const pos = new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z);
+          const normal = new THREE.Vector3(e.normal.x, e.normal.y, e.normal.z);
+          if (e.weapon === "fists") this.effects.dust(pos, normal);
+          else this.effects.wallImpact(pos, normal);
           break;
+        }
+        case "explosion":
+          this.effects.explosion(new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z), e.radius);
+          if (e.owner === localId) this.punchPitch += 0.004;
+          break;
+        case "trail": {
+          // Your own trail starts at your gun's muzzle, not your eye.
+          const segments = e.segments.map(([a, b]) => [new THREE.Vector3(a.x, a.y, a.z), new THREE.Vector3(b.x, b.y, b.z)] as [THREE.Vector3, THREE.Vector3]);
+          if (e.player === localId && segments.length) segments[0][0] = this.muzzle(new THREE.Vector3());
+          this.effects.trail(segments, RAIL_COLOR);
+          break;
+        }
         case "shielded":
           // Spawn protection soaked it up: sparks, no flinch.
           if (e.victim !== localId) this.effects.playerImpact(new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z), this.v2.copy(this.forward));
@@ -377,4 +409,16 @@ export class GameRenderer {
       }
     }
   }
+}
+
+/** A pickup that's a weapon: a little gun shape, about the size of the editor's box. */
+function weaponPickupShape(mat: THREE.Material): THREE.Object3D {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(22, 5, 6), mat);
+  const barrel = new THREE.Mesh(new THREE.BoxGeometry(10, 3, 3), mat);
+  barrel.position.set(14, 0, 1);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 8), mat);
+  grip.position.set(-6, 0, -6);
+  g.add(body, barrel, grip);
+  return g;
 }

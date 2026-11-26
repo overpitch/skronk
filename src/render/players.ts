@@ -15,6 +15,7 @@
 import * as THREE from "three";
 import type { PlayerId } from "../sim/events";
 import { MOVE, PLAYER_MINS } from "../sim/movement";
+import type { WeaponId } from "../sim/weapons";
 
 /** Team colours (1, 2); free-for-all players (team 0) each get one from PLAYER_COLORS by id. */
 const TEAM_COLORS: Record<number, number> = { 1: 0xc84848, 2: 0x4878c8 };
@@ -54,6 +55,8 @@ export interface BodyState {
   alive: boolean;
   /** Spawn protection: the body shimmers. */
   shielded: boolean;
+  /** The weapon in their hands. */
+  weapon: WeaponId;
 }
 
 interface Body {
@@ -70,6 +73,8 @@ interface Body {
   /** Shoulders, arms and gun: pitch with the aim. */
   aim: THREE.Group;
   gun: THREE.Group;
+  /** One model per weapon inside `gun`; the one in hand is shown. */
+  guns: Map<WeaponId, THREE.Group>;
   bodyMat: THREE.MeshLambertMaterial;
   state: BodyState;
   flash: number;
@@ -92,6 +97,9 @@ export class PlayerModels {
   private armourMat = new THREE.MeshLambertMaterial({ color: ARMOUR_COLOR });
   private gunMat = new THREE.MeshLambertMaterial({ color: GUN_COLOR });
   private visorMat = new THREE.MeshBasicMaterial({ color: VISOR_COLOR });
+  private woodMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
+  private redMat = new THREE.MeshLambertMaterial({ color: 0x8c2a22 });
+  private railMat = new THREE.MeshBasicMaterial({ color: 0x7ff0ff });
 
   constructor(
     private scene: THREE.Scene,
@@ -99,6 +107,8 @@ export class PlayerModels {
     private detailed = false,
     /** Bodies cast shadows (Full quality). */
     private castShadows = false,
+    /** Weapons with glow strips and trim. */
+    private detailedWeapons = false,
   ) {}
 
   /** Make sure a body exists for each id in `ids`, and remove the rest. */
@@ -199,6 +209,7 @@ export class PlayerModels {
     b.head.rotation.y = -pitch * 0.75;
     b.aim.rotation.y = -pitch * 0.75;
 
+    for (const [id, g] of b.guns) g.visible = id === s.weapon;
     // Recoil: the gun jumps back and settles.
     b.recoil = Math.max(0, b.recoil - RECOIL_RECOVERY * dt);
     b.gun.position.x = -2.5 * b.recoil;
@@ -284,10 +295,46 @@ export class PlayerModels {
     chest.add(aim);
     const gun = new THREE.Group();
     aim.add(gun);
-    gun.add(block(4, 20, 5, this.gunMat, 15, -3, -4)); // body
-    gun.add(block(2.5, 10, 2.5, this.gunMat, 28, -3, -3.2)); // barrel
-    gun.add(block(2.5, 3, 6, this.gunMat, 10, -3, -8.5)); // grip
-    if (d) gun.add(block(4.2, 4, 1.2, this.visorMat, 18, -3, -1.3)); // glowing strip on top
+    const guns = new Map<WeaponId, THREE.Group>();
+    const model = (id: WeaponId, ...parts: (THREE.Object3D | false)[]) => {
+      const g = new THREE.Group();
+      for (const p of parts) if (p) g.add(p);
+      g.visible = id === "machinegun";
+      gun.add(g);
+      guns.set(id, g);
+    };
+    const dw = this.detailedWeapons;
+    model("fists"); // just the hands
+    model(
+      "machinegun",
+      block(4, 20, 5, this.gunMat, 15, -3, -4), // body
+      block(2.5, 10, 2.5, this.gunMat, 28, -3, -3.2), // barrel
+      block(2.5, 3, 6, this.gunMat, 10, -3, -8.5), // grip
+      dw && block(4.2, 4, 1.2, this.visorMat, 18, -3, -1.3), // glowing strip on top
+    );
+    model(
+      "shotgun",
+      block(4.5, 16, 4.5, this.gunMat, 14, -3, -4),
+      block(4, 16, 2.4, this.gunMat, 29, -3, -3), // double barrel
+      block(4.6, 6, 3, this.woodMat, 22, -3, -6), // pump
+      block(3, 8, 5, this.woodMat, 4, -3, -6), // stock
+    );
+    model(
+      "rocketlauncher",
+      block(7, 30, 7, this.gunMat, 15, -3, -1.5), // tube
+      block(7.6, 2.5, 7.6, this.redMat, 30, -3, -1.5), // front ring
+      block(2.5, 3, 6, this.gunMat, 10, -3, -8), // grip
+      dw && block(1, 18, 1, this.visorMat, 15, -6.8, 1.5),
+    );
+    model(
+      "railgun",
+      block(3.5, 22, 4.5, this.gunMat, 14, -3, -4),
+      block(2, 18, 2, this.gunMat, 33, -3, -3.2), // long barrel
+      block(2.5, 3, 6, this.gunMat, 10, -3, -8.5),
+      block(3.8, 16, 1, this.railMat, 18, -3, -1.6), // lit coil strip
+      dw && block(3.2, 1.2, 3.2, this.railMat, 30, -3, -3.2),
+      dw && block(3.2, 1.2, 3.2, this.railMat, 36, -3, -3.2),
+    );
     // Right arm to the grip, left arm to under the barrel.
     const rShoulder = v(0, -10, 0);
     const rElbow = v(4, -10, -9);
@@ -315,8 +362,9 @@ export class PlayerModels {
       head,
       aim,
       gun,
+      guns,
       bodyMat,
-      state: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, onGround: true, alive: true, shielded: false },
+      state: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, onGround: true, alive: true, shielded: false, weapon: "machinegun" },
       flash: 0,
       phase: 0,
       swing: 0,

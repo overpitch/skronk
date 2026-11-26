@@ -21,6 +21,7 @@ import { FREE_PLAY, MATCH_PRESETS, matchPreset, REMATCH_READY_TICKS, type MatchR
 import { EYE_HEIGHT } from "./sim/movement";
 import { secondsToTicks } from "./sim/tick";
 import { TICK_DT, World } from "./sim/world";
+import { canFire, cycleWeapon, WEAPONS, type WeaponId } from "./sim/weapons";
 
 /** Your player id in a game on this machine (a network game gets one from the server). */
 const LOCAL_PLAYER = 1;
@@ -350,6 +351,21 @@ async function start() {
   let fpsTime = 0;
   /** Fire or jump held last tick: on the end screen, a fresh press asks for a rematch. */
   let rematchHeld = true;
+  /**
+   * The weapon you last asked for and when: further wheel steps go on from it, even
+   * before a network game's server has made the switch.
+   */
+  let wanted = { weapon: -1, tick: 0 };
+  /** A weapon change asked for: the slot to send (1 = fists), or 0. */
+  const weaponSlot = (): number => {
+    const req = input.takeWeaponRequest();
+    if (!req || !me.alive) return 0;
+    const recent = wanted.weapon >= 0 && wanted.weapon !== me.weapon && world.tick - wanted.tick < 30;
+    const w = "slot" in req ? req.slot - 1 : cycleWeapon(me, recent ? wanted.weapon : me.weapon, req.cycle);
+    if (!canFire(me, w)) return 0;
+    wanted = { weapon: w, tick: world.tick };
+    return w + 1;
+  };
 
   const frame = (now: number) => {
     const dt = Math.min(0.25, (now - last) / 1000);
@@ -360,10 +376,11 @@ async function start() {
     acc = !net && !active ? 0 : acc + dt;
     let ticks = 0;
     let firedNow = false;
+    let firedWeapon: WeaponId = WEAPONS[me.weapon].id;
     frameEvents.length = 0;
     while (acc >= TICK_DT && ticks < MAX_TICKS_PER_FRAME) {
-      const local = input.command();
-      const mine = active ? local : { ...local, forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false };
+      const local = { ...input.command(), weapon: weaponSlot() };
+      const mine = active ? local : { ...local, forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false, weapon: 0 };
       // This tick's events: from our own step, or from the server's snapshots.
       const tickEvents: SimEvent[] = [];
       if (net) {
@@ -381,7 +398,10 @@ async function start() {
           input.yaw = me.yaw;
           input.pitch = me.pitch;
         }
-        if (predicted.fired) firedNow = true;
+        if (predicted.fired) {
+          firedNow = true;
+          firedWeapon = predicted.weapon;
+        }
       } else {
         const press = mine.fire || mine.jump;
         const m = world.match;
@@ -422,11 +442,11 @@ async function start() {
     }
     const time = now / 1000;
     renderer.render({ world, localId, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt, predictedFire: !!net }, frameEvents);
-    if (firedNow) renderer.localShot();
+    if (firedNow) renderer.localShot(firedWeapon);
     hud.update(world, me, frameEvents, dt, input.scoresHeld);
     // In a network game your shot's sound plays when you fire, not when the server's word comes back.
     const heard = net ? frameEvents.filter((e) => !(e.type === "fire" && e.player === localId)) : frameEvents;
-    if (firedNow) heard.push({ type: "fire", player: localId, projectile: -1, origin: { ...eye }, dir: { x: 0, y: 0, z: 0 } });
+    if (firedNow) heard.push({ type: "fire", player: localId, weapon: firedWeapon, projectile: -1, origin: { ...eye }, dir: { x: 0, y: 0, z: 0 } });
     sfx.play(heard, localId, eye, input.yaw);
 
     fpsFrames++;

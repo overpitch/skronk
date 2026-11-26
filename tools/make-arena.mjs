@@ -2,6 +2,7 @@
 //  - raised walkways along the north and south walls (128 up), ramps at all four corners;
 //  - four pillars for cover, and a low plinth in the middle with the armor;
 //  - health on each walkway, ammo by the east and west walls;
+//  - a railgun on the north walkway, a rocket launcher on the south one, shotguns on the floor;
 //  - portal walls east and west, portal faces on the walkway fronts, two portal floor pads.
 // Generated once as a starting point; it's Dave's to edit in TrenchBroom.
 import { box, N, portalOn, ramp, shell, writeMap } from "./mapgen.mjs";
@@ -58,6 +59,10 @@ writeMap("arena", {
     { classname: "pickup_health", origin: "256 -672 145", amount: "25" },
     { classname: "pickup_ammo", origin: "-680 0 17", amount: "50" },
     { classname: "pickup_ammo", origin: "680 0 17", amount: "50" },
+    { classname: "pickup_railgun", origin: "256 672 145" },
+    { classname: "pickup_rocketlauncher", origin: "-256 -672 145" },
+    { classname: "pickup_shotgun", origin: "0 400 17" },
+    { classname: "pickup_shotgun", origin: "0 -400 17" },
     { classname: "light", origin: "-384 0 380", light: "450" },
     { classname: "light", origin: "384 0 380", light: "450" },
     { classname: "light", origin: "0 640 380", light: "350", _color: "1 0.85 0.6" },

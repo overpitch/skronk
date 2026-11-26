@@ -3,18 +3,26 @@
  * The sim never reads these back; dropping them changes nothing about the game.
  */
 import type { Vec3 } from "../math/vec3";
+import type { WeaponId } from "./weapons";
 
 export type PlayerId = number;
 
 export type SimEvent =
-  | { type: "fire"; player: PlayerId; projectile: number; origin: Vec3; dir: Vec3 }
+  /** A trigger pull that went off. `projectile` is the id of what it launched, or -1 (melee, hitscan). */
+  | { type: "fire"; player: PlayerId; weapon: WeaponId; projectile: number; origin: Vec3; dir: Vec3 }
   | { type: "dryFire"; player: PlayerId }
+  /** A different weapon came up in someone's hands. */
+  | { type: "weaponSwitch"; player: PlayerId; weapon: WeaponId }
+  /** An instant shot's path (railgun), from the eye, in pieces where it went through portals. */
+  | { type: "trail"; player: PlayerId; weapon: WeaponId; segments: [Vec3, Vec3][] }
+  /** A rocket went off. */
+  | { type: "explosion"; owner: PlayerId; weapon: WeaponId; pos: Vec3; radius: number }
   /** A shot went into portal `from` at `pos` and came out of `to` at `exit`. */
   | { type: "shotThroughPortal"; projectile: number; from: number; to: number; pos: Vec3; exit: Vec3 }
-  /** A projectile hit level geometry. */
-  | { type: "impact"; projectile: number; owner: PlayerId; pos: Vec3; normal: Vec3 }
-  /** A projectile hit a player. `damage` is before armor. */
-  | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; damage: number; pos: Vec3 }
+  /** A shot hit level geometry (`projectile` -1 for an instant shot or a punch). */
+  | { type: "impact"; projectile: number; owner: PlayerId; weapon: WeaponId; pos: Vec3; normal: Vec3 }
+  /** A shot, blast or punch hurt a player. `damage` is before armor. A shotgun blast is one hit, all pellets together. */
+  | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; weapon: WeaponId; damage: number; pos: Vec3 }
   /** A shot hit a player under spawn protection: no damage. */
   | { type: "shielded"; projectile: number; attacker: PlayerId; victim: PlayerId; pos: Vec3 }
   /** Someone won (frag limit, or the lead when time ran out). Everything holds still until a rematch. */
@@ -24,7 +32,7 @@ export type SimEvent =
   /** A new match began: scores reset, everyone respawned. */
   | { type: "matchStart" }
   /** attacker is null for deaths with no killer, like falling out of the world. */
-  | { type: "kill"; attacker: PlayerId | null; victim: PlayerId }
+  | { type: "kill"; attacker: PlayerId | null; victim: PlayerId; weapon: WeaponId | null }
   | { type: "respawn"; player: PlayerId }
   | { type: "pickup"; player: PlayerId; kind: string; index: number }
   /** A player went in through portal `from` and came out of `to`; their view was turned to match. */

@@ -59,7 +59,9 @@ Right-click in the 2D or 3D view → Create Point Entity, or drag from the Entit
 | `player_spawn` | `angle` (degrees, 0 = +X, 90 = +Y), `team` (0 any, 1, 2) |
 | `pickup_health` | `amount` (default 25) |
 | `pickup_armor` | `amount` (default 50) |
-| `pickup_ammo` | `amount` (default 50) |
+| `pickup_ammo` | none: an ammo box tops up every gun the player holds |
+| `pickup_shotgun`, `pickup_rocketlauncher`, `pickup_railgun` | `amount`: ammo it comes with (default 10) |
+| `pickup_machinegun` | `amount` (default 50): machine gun ammo (everyone starts with the gun) |
 | `light` | `light` brightness (default 300), `_color` as `R G B` from 0 to 1 |
 
 Put spawns' boxes just above the floor, not inside it (origin 25 above the floor top); pickups' boxes too (origin 17 above). The first four lights are used in Light graphics mode (Xbox), the first eight in Full: put the important ones first.

@@ -4,8 +4,9 @@
  * - Perceives: enemies in its field of view with a clear line of sight. Being
  *   shot makes it aware of the shooter wherever they are.
  * - Decides: fight a visible enemy (retreating towards health while it shoots,
- *   if it's hurting); otherwise fetch a pickup it badly needs (out of ammo, low
- *   on health); otherwise chase to where it last saw an enemy; otherwise grab
+ *   if it's hurting) with the weapon that suits the distance; otherwise fetch a
+ *   pickup it badly needs (out of ammo, low on health; weapons it lacks are
+ *   worth a lot); otherwise chase to where it last saw an enemy; otherwise grab
  *   any pickup worth the trip; otherwise roam the map.
  * - Aims like a person, not a turret: it reacts after a delay, turns at a
  *   limited rate, leads moving targets only partly, and its aim wanders. It
@@ -20,12 +21,13 @@ import { vec3, type Vec3 } from "../math/vec3";
 import { emptyCommand, type PlayerCommand } from "../sim/command";
 import { EYE_HEIGHT, MOVE, PLAYER_MAXS, PLAYER_MINS } from "../sim/movement";
 import { TICK_DT, TICK_RATE } from "../sim/tick";
-import { WEAPON } from "../sim/weapon";
+import { WEAPONS } from "../sim/weapons";
 import type { PlayerId, PlayerState, World } from "../sim/world";
 import type { NavGraph } from "./nav";
 import { Navigator, type Steer } from "./navigator";
 import { hash, signedHash } from "./random";
-import { choosePickup, LOW_AMMO, LOW_HEALTH, pickupWorth } from "./wants";
+import { choosePickup, LOW_HEALTH, pickupWorth, runningDry } from "./wants";
+import { chooseWeapon, FIGHT_RANGE, hasGunAmmo } from "./weaponChoice";
 
 export interface BotSkill {
   /** Ticks from first seeing an enemy to the first shot. */
@@ -58,9 +60,12 @@ export function botSkill(level: number): BotSkill {
 
 /** How long it keeps chasing an enemy it can no longer see. */
 const MEMORY_TICKS = 5 * TICK_RATE;
-/** Fighting distance: closes in beyond FAR, backs off inside NEAR. */
-const NEAR = 180;
-const FAR = 650;
+/** With only fists, it takes on someone this close and goes for ammo otherwise. */
+const BRAWL_DISTANCE = 300;
+/** How often it reconsiders its weapon. */
+const WEAPON_RETHINK_TICKS = 15;
+/** Distance it readies a weapon for when there's no one to fight. */
+const ROAM_DISTANCE = 500;
 /**
  * Before strafing a way, check for ground under a spot ahead: further ahead the faster
  * it's going (it takes a while to stop). A drop deeper than SAFE_DROP is off limits.
@@ -101,6 +106,9 @@ export class Bot {
   private strafe = 1;
   private strafeUntil = 0;
   private blocked = 0;
+  /** Weapon it wants in hand (index), reconsidered every WEAPON_RETHINK_TICKS. */
+  private wantWeapon = -1;
+  private weaponTick = 0;
 
   constructor(
     readonly id: PlayerId,
@@ -133,6 +141,8 @@ export class Bot {
       this.started = false;
       this.fetch = -1;
       this.rethinkTick = 0;
+      this.wantWeapon = -1;
+      this.weaponTick = 0;
       return cmd;
     }
     if (!this.started) {
@@ -144,22 +154,29 @@ export class Bot {
     this.perceive(world, me);
     this.chooseFetch(world, me);
     const pickup = this.fetch >= 0 ? world.pickups[this.fetch] : null;
-    const urgent = !!pickup && (me.ammo < LOW_AMMO || me.health < LOW_HEALTH);
+    const urgent = !!pickup && (runningDry(me) || me.health < LOW_HEALTH);
     const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
     const target = this.target === null ? null : (world.players.get(this.target) ?? null);
     let lookYaw = this.yaw;
     let lookPitch = 0;
     let steer: Steer;
+    const range = target ? Math.hypot(target.origin.x - me.origin.x, target.origin.y - me.origin.y, target.origin.z - me.origin.z) : Infinity;
+    const fighting = !!target && this.targetVisible && (hasGunAmmo(me) || range < BRAWL_DISTANCE);
+    this.readyWeapon(world, me, fighting ? range : ROAM_DISTANCE);
+    if (this.wantWeapon >= 0 && this.wantWeapon !== me.weapon) cmd.weapon = this.wantWeapon + 1;
+    const spec = WEAPONS[me.weapon];
 
-    if (target && this.targetVisible && me.ammo > 0) {
-      // Fight: aim where it will be (partly), plus wander.
+    if (target && fighting) {
+      // Fight: aim where it will be (partly), plus wander. Rockets go at the feet of someone on the ground.
       const dx = target.origin.x - eye.x;
       const dy = target.origin.y - eye.y;
-      const flight = Math.hypot(dx, dy, target.origin.z + this.aimHeight - eye.z) / WEAPON.projectileSpeed;
+      const feet = spec.splash !== null && target.onGround && range > 200;
+      const aimHeight = feet ? PLAYER_MINS.z + 4 : this.aimHeight;
+      const flight = spec.shot === "projectile" ? Math.hypot(dx, dy, target.origin.z + aimHeight - eye.z) / spec.speed : 0;
       const lead = flight * this.skill.lead;
       const ax = target.origin.x + target.velocity.x * lead - eye.x;
       const ay = target.origin.y + target.velocity.y * lead - eye.y;
-      const az = target.origin.z + this.aimHeight + target.velocity.z * lead * 0.5 - eye.z;
+      const az = target.origin.z + aimHeight + (feet ? 0 : target.velocity.z * lead * 0.5) - eye.z;
       this.wander(world);
       lookYaw = Math.atan2(ay, ax) + this.errYaw;
       lookPitch = Math.atan2(az, Math.hypot(ax, ay)) + this.errPitch;
@@ -174,7 +191,7 @@ export class Bot {
         this.nav.goTo(pickup.origin);
         steer = this.nav.steer(world, me);
       } else {
-        steer = this.fightMove(world, me, target);
+        steer = this.fightMove(world, me, target, FIGHT_RANGE[spec.id]);
       }
       this.turn(lookYaw, lookPitch);
       const dist = Math.hypot(ax, ay, az);
@@ -218,6 +235,13 @@ export class Bot {
     }
     cmd.jump = steer.jump;
     return cmd;
+  }
+
+  /** Picks the weapon for a fight at this distance (every so often, so it doesn't dither). */
+  private readyWeapon(world: World, me: PlayerState, distance: number) {
+    if (world.tick < this.weaponTick && this.wantWeapon >= 0) return;
+    this.weaponTick = world.tick + WEAPON_RETHINK_TICKS;
+    this.wantWeapon = chooseWeapon(me, distance);
   }
 
   /** Which pickup to go for, reconsidered every RETHINK_TICKS or as soon as the current one is no use. */
@@ -323,7 +347,7 @@ export class Bot {
   }
 
   /** Strafe side to side, closing in or backing off, never off a drop. */
-  private fightMove(world: World, me: PlayerState, target: PlayerState): Steer {
+  private fightMove(world: World, me: PlayerState, target: PlayerState, keep: { near: number; far: number }): Steer {
     const dx = target.origin.x - me.origin.x;
     const dy = target.origin.y - me.origin.y;
     const dist = Math.hypot(dx, dy) || 1;
@@ -333,7 +357,7 @@ export class Bot {
       this.strafe = hash(this.id * 31 + world.tick) < 0.5 ? -1 : 1;
       this.strafeUntil = world.tick + 25 + Math.floor(hash(this.id * 37 + world.tick) * 50);
     }
-    const range = dist > FAR ? 0.8 : dist < NEAR ? -0.8 : 0;
+    const range = dist > keep.far ? 0.8 : dist < keep.near ? -0.8 : 0;
     const speed = Math.hypot(me.velocity.x, me.velocity.y);
     this.blocked = me.onGround && speed < MOVE.maxSpeed * 0.2 ? this.blocked + 1 : 0;
     if (this.blocked > 6) {

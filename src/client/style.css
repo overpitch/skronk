@@ -318,8 +318,43 @@ body {
   font-weight: 700;
   margin-right: 26px;
 }
+#hud .ammo {
+  text-align: right;
+}
 #hud .ammo .value {
   margin-right: 0;
+}
+/* Weapons held, by slot: the one in hand lit up, ones you haven't got faint. */
+#weapon-bar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+#weapon-bar .slot {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+#weapon-bar .slot .key {
+  opacity: 0.6;
+  margin-right: 4px;
+}
+#weapon-bar .slot.missing {
+  opacity: 0.18;
+}
+#weapon-bar .slot.empty {
+  color: #ff8a7a;
+}
+#weapon-bar .slot.current {
+  opacity: 1;
+  border-color: #fff;
+  background: rgba(255, 255, 255, 0.18);
 }
 #hud .value.low {
   color: #ff6a5a;

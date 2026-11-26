@@ -15,7 +15,7 @@
  */
 import { clone, copy, set, vec3 } from "../math/vec3";
 import type { PlayerCommand } from "../sim/command";
-import { WEAPON } from "../sim/weapon";
+import { triggerTick, WEAPONS, type WeaponId } from "../sim/weapons";
 import type { PlayerState, World } from "../sim/world";
 
 /** Commands kept at most (2 s): more than that in flight and something's badly wrong. */
@@ -30,6 +30,8 @@ export interface PredictedTick {
   teleported: boolean;
   /** The newest command fired the gun. */
   fired: boolean;
+  /** The weapon in hand after it (the one that fired, if it did). */
+  weapon: WeaponId;
 }
 
 function copyPlayer(p: PlayerState): PlayerState {
@@ -39,6 +41,7 @@ function copyPlayer(p: PlayerState): PlayerState {
     prevOrigin: clone(p.prevOrigin),
     velocity: clone(p.velocity),
     groundNormal: clone(p.groundNormal),
+    ammo: [...p.ammo],
   };
 }
 
@@ -70,7 +73,7 @@ export class Predictor {
     if (!server.alive || this.pending.length === 0 || world.match.phase !== "playing") {
       this.state = null;
       set(this.offset, 0, 0, 0);
-      return { teleported: false, fired: false };
+      return { teleported: false, fired: false, weapon: WEAPONS[server.weapon].id };
     }
 
     const newest = this.pending[this.pending.length - 1];
@@ -115,17 +118,7 @@ export class Predictor {
   private step(world: World, s: PlayerState, cmd: PlayerCommand): PredictedTick {
     copy(s.prevOrigin, s.origin);
     const teleported = world.movePlayer(s, cmd);
-    if (s.fireCooldown > 0) s.fireCooldown--;
-    let fired = false;
-    if (cmd.fire && s.fireCooldown <= 0) {
-      if (s.ammo > 0) {
-        s.ammo--;
-        s.fireCooldown = WEAPON.fireIntervalTicks;
-        fired = true;
-      } else {
-        s.fireCooldown = WEAPON.fireIntervalTicks * 2;
-      }
-    }
-    return { teleported, fired };
+    const { fired } = triggerTick(s, cmd);
+    return { teleported, fired, weapon: WEAPONS[s.weapon].id };
   }
 }

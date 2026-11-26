@@ -19,6 +19,8 @@ export interface PlayerCommand {
   fire: boolean;
   /** Secondary trigger: fire a portal (one per press). */
   portal: boolean;
+  /** Switch to the weapon in this slot (1 = fists, 2 = machine gun...), 0 for no change. Sent once per press. */
+  weapon: number;
 }
 
 export const emptyCommand = (): PlayerCommand => ({
@@ -30,6 +32,7 @@ export const emptyCommand = (): PlayerCommand => ({
   sprint: false,
   fire: false,
   portal: false,
+  weapon: 0,
 });
 
 const PITCH_MAX = (89 * Math.PI) / 180;
@@ -52,5 +55,6 @@ export function sanitizeCommand(raw: unknown): PlayerCommand {
     sprint: c.sprint === true,
     fire: c.fire === true,
     portal: c.portal === true,
+    weapon: Math.floor(num(c.weapon, 0, 32)),
   };
 }

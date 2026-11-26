@@ -23,7 +23,10 @@ export function captureSnapshot(world: World): WorldSnapshot {
     alive: p.alive,
     health: p.health,
     armor: p.armor,
-    ammo: p.ammo,
+    weapon: p.weapon,
+    weapons: p.weapons,
+    ammo: [...p.ammo],
+    firing: p.firing,
     frags: p.frags,
     deaths: p.deaths,
     respawnTick: p.respawnTick,
@@ -43,6 +46,7 @@ export function captureSnapshot(world: World): WorldSnapshot {
       prev: v3(pr.prevOrigin),
       velocity: v3(pr.velocity),
       hops: pr.hops,
+      weapon: pr.weapon,
     })),
     portals: world.portals.map((p) => ({ ...p })),
     pickups: world.pickups.map((pk) => pk.availableAtTick),
@@ -68,7 +72,10 @@ export function applySnapshot(world: World, snap: WorldSnapshot) {
     p.alive = s.alive;
     p.health = s.health;
     p.armor = s.armor;
-    p.ammo = s.ammo;
+    p.weapon = s.weapon;
+    p.weapons = s.weapons;
+    p.ammo = [...s.ammo];
+    p.firing = s.firing;
     p.frags = s.frags;
     p.deaths = s.deaths;
     p.respawnTick = s.respawnTick;
@@ -86,6 +93,7 @@ export function applySnapshot(world: World, snap: WorldSnapshot) {
       prevOrigin: into(vec3(), s.prev),
       velocity: into(vec3(), s.velocity),
       hops: s.hops,
+      weapon: s.weapon,
     });
   }
   world.restorePortals(snap.portals);

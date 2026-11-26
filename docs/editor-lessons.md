@@ -86,10 +86,13 @@ What a player can do (1 unit is about an inch):
 **You'll make:** a map ready for a fight.
 
 1. **Spawns:** four or more `player_spawn`s spread round the map, each facing into the open. When someone is fragged they come back at one of these: the game picks one away from enemies and out of their sight if it can, so spawns hidden from each other (round a corner, behind a pillar, on another level) make for fairer fights. A respawned player can't be hurt for two seconds, or until they fire.
-2. **Pickups:** `pickup_health`, `pickup_armor` and `pickup_ammo`. Place each one's box just above the floor (origin 17 above the floor top). Their `amount` key sets how much they give.
+2. **Pickups:** `pickup_health`, `pickup_armor` and `pickup_ammo` (an ammo box: it tops up every gun you hold). Place each one's box just above the floor (origin 17 above the floor top). The `amount` key on health and armor sets how much they give.
    - Health and ammo spread out, so nobody can camp them all.
    - Armor somewhere worth the trip: the top of a ramp, the far side of a jump.
-3. **Lights:** two to four. Light graphics mode (the Xbox) uses only the first four lights in a map and Full mode the first eight, so put the important ones first; `_color` tints them (`1 0.85 0.6` is warm, `0.6 0.8 1` cool).
+3. **Weapons:** `pickup_shotgun`, `pickup_rocketlauncher`, `pickup_railgun`. Everyone spawns with fists and the machine gun; the rest are found. A map needn't have them all: three to five weapon pickups suits a small map.
+   - The strong ones (rockets, railgun) where getting them costs something: in the open, up high, or only reachable by portal. The railgun suits a spot that looks down a long line.
+   - The shotgun near tight corners, where it shines.
+4. **Lights:** two to four. Light graphics mode (the Xbox) uses only the first four lights in a map and Full mode the first eight, so put the important ones first; `_color` tints them (`1 0.85 0.6` is warm, `0.6 0.8 1` cool).
 
 **Check it:** in the game's menu set **Bots** to 3 and play. Bots go for pickups when they need them, so you'll see quickly whether yours are placed well. Open the **Arena** map to see a full layout.
 
