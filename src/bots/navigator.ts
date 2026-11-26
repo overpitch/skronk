@@ -7,11 +7,16 @@
  * Following a route: steer at the next node (or further along when the way is
  * straight and clear), jump when blocked (the same rule the graph was built
  * with), and plan again when knocked off course, sent through a portal, or stuck.
+ *
+ * Routes can go through open portals (portalLinks.ts): on such a hop it walks
+ * into the opening, and once through steers for where it lands. When the
+ * portals change it plans again, since a shortcut may have opened or closed.
  */
 import { vec3, type Vec3 } from "../math/vec3";
 import { PLAYER_MAXS, PLAYER_MINS } from "../sim/movement";
 import type { PlayerId, PlayerState, World } from "../sim/world";
-import { closeTo, NAV_REACH_Z, NAV_SPACING, type NavGraph } from "./nav";
+import { closeTo, NAV_REACH_Z, NAV_SPACING, type ExtraEdges, type NavEdge, type NavGraph } from "./nav";
+import { portalLinks } from "./portalLinks";
 import { hash } from "./random";
 
 /** Further than this beyond the length of the current hop (a fall, a portal, a knock): plan again. */
@@ -44,6 +49,10 @@ export class Navigator {
   private goal: Vec3 | null = null;
   /** No route to the goal: stand until given another. */
   private noRoute = false;
+  /** Edges through the portals open now (shared by the world's bots). */
+  private extra: ExtraEdges = new Map();
+  /** On a hop through a portal: already through it. */
+  private through = false;
 
   constructor(
     readonly id: PlayerId,
@@ -82,7 +91,18 @@ export class Navigator {
   }
 
   steer(world: World, me: PlayerState): Steer {
+    const extra = portalLinks(world, this.nav);
+    if (extra !== this.extra) {
+      // Portals changed: a shortcut may have opened, or the one we're taking closed.
+      this.extra = extra;
+      this.noRoute = false;
+      if (this.route.length) this.plan(me, false);
+    }
     if (this.noRoute) return STAND;
+    const hop = this.hopEdge();
+    if (hop?.portal !== undefined && !this.through) {
+      this.through = world.events.some((e) => e.type === "teleport" && e.player === this.id && e.from === hop.portal);
+    }
     if (this.step >= this.route.length && !this.arrived) this.plan(me, true);
     // Reaching any node a little way ahead (it runs straight past the ones in between) moves us on.
     for (let k = Math.min(this.route.length - 1, this.step + LOOKAHEAD); k >= this.step; k--) {
@@ -108,9 +128,10 @@ export class Navigator {
     const d = Math.hypot(aim.x - me.origin.x, aim.y - me.origin.y) + Math.abs(aim.z - me.origin.z);
     // A drop off a ledge can land a long way out, so the allowance grows with the hop.
     const prev = this.step > 0 ? this.node(this.step - 1) : next;
-    const hop = Math.hypot(next.x - prev.x, next.y - prev.y) + Math.abs(next.z - prev.z);
+    const length = Math.hypot(next.x - prev.x, next.y - prev.y) + Math.abs(next.z - prev.z);
     const toNext = Math.hypot(next.x - me.origin.x, next.y - me.origin.y) + Math.abs(next.z - me.origin.z);
-    if (toNext > hop + OFF_ROUTE) {
+    // Going through a portal takes you far from both ends of the hop for a moment: that's expected.
+    if (this.hopEdge()?.portal === undefined && toNext > length + OFF_ROUTE) {
       this.plan(me, false);
       return STAND;
     }
@@ -136,8 +157,15 @@ export class Navigator {
     return this.nav.nodes[this.route[i]].pos;
   }
 
+  /** The hop being taken now: from the node before the next one to the next one. */
+  private hopEdge(): NavEdge | null {
+    if (this.step <= 0 || this.step >= this.route.length) return null;
+    return this.nav.edge(this.route[this.step - 1], this.route[this.step], this.extra);
+  }
+
   private advance() {
     this.step++;
+    this.through = false;
     this.best = Infinity;
     this.sinceBetter = 0;
     this.failures = 0;
@@ -150,11 +178,12 @@ export class Navigator {
     if (this.goal) goal = this.nav.nearest(this.goal);
     this.route = [];
     this.step = 0;
+    this.through = false;
     this.best = Infinity;
     this.sinceBetter = 0;
     if (start < 0) return;
     if (goal >= 0) {
-      const path = this.nav.findPath(start, goal);
+      const path = this.nav.findPath(start, goal, this.extra);
       if (path) {
         this.route = path;
         return;
@@ -167,7 +196,7 @@ export class Navigator {
     }
     for (let tries = 0; tries < 8; tries++) {
       const pick = Math.floor(hash(this.id * 7919 + this.picks++) * this.nav.nodes.length);
-      const path = this.nav.findPath(start, pick);
+      const path = this.nav.findPath(start, pick, this.extra);
       if (path && path.length > 3) {
         this.route = path;
         return;
@@ -181,6 +210,9 @@ export class Navigator {
    * Jumps and drops are taken node by node.
    */
   private steerTarget(world: World, me: PlayerState): Vec3 {
+    // Into a portal: at the opening until through, then for where it lands.
+    const hop = this.hopEdge();
+    if (hop?.portal !== undefined) return this.through ? this.node(this.step) : hop.aim;
     const last = Math.min(this.route.length - 1, this.step + LOOKAHEAD);
     for (let k = last; k > this.step; k--) {
       if (!this.plainRun(this.step, k)) continue;
@@ -195,7 +227,7 @@ export class Navigator {
   /** Every edge from route[i] up to route[k] is a plain level walk. */
   private plainRun(i: number, k: number): boolean {
     for (let j = i; j < k; j++) {
-      const e = this.nav.edge(this.route[j], this.route[j + 1]);
+      const e = this.nav.edge(this.route[j], this.route[j + 1], this.extra);
       if (!e || e.jump || e.drop || Math.abs(this.node(j + 1).z - this.node(j).z) > 4) return false;
     }
     return true;

@@ -9,9 +9,13 @@
  * (step up stairs, climb a ramp, jump a low wall, drop off a ledge) becomes an
  * edge, and nothing else does.
  *
- * The graph ignores portals: they come and go during play.
+ * The graph itself ignores portals: they come and go during play. Routes can take
+ * extra edges through whatever portals are open (portalLinks.ts), so places only a
+ * portal gets you to (a high ledge) stay in the graph as long as they look out
+ * over the part of the map you can walk.
  */
 import { clone, vec3, type Vec3 } from "../math/vec3";
+import { EYE_HEIGHT } from "../sim/movement";
 import type { LevelData } from "../level/types";
 import type { Tracer } from "../sim/collision";
 import { emptyCommand } from "../sim/command";
@@ -40,7 +44,13 @@ export interface NavEdge {
   drop: boolean;
   /** Where the test walk steered: the neighbour it set off for (differs from `to` on a drop). */
   aim: Vec3;
+  /** Through this portal (id): only while it's open. `aim` is then a point inside its opening. */
+  portal?: number;
 }
+
+/** Extra edges by node, through the portals open right now. */
+export type ExtraEdges = ReadonlyMap<number, readonly NavEdge[]>;
+const NO_EXTRA: ExtraEdges = new Map();
 
 export interface NavNode {
   /** Player origin standing here. */
@@ -97,12 +107,15 @@ export class NavGraph {
     return best;
   }
 
-  edge(from: number, to: number): NavEdge | null {
-    return this.nodes[from].edges.find((e) => e.to === to) ?? null;
+  edge(from: number, to: number, extra: ExtraEdges = NO_EXTRA): NavEdge | null {
+    return extra.get(from)?.find((e) => e.to === to) ?? this.nodes[from].edges.find((e) => e.to === to) ?? null;
   }
 
-  /** Cheapest route from one node to another (A*), as node ids including both ends, or null. */
-  findPath(from: number, to: number): number[] | null {
+  /**
+   * Cheapest route from one node to another (A*), as node ids including both ends, or null.
+   * `extra`: edges through open portals, which a route may take too.
+   */
+  findPath(from: number, to: number, extra: ExtraEdges = NO_EXTRA): number[] | null {
     if (from < 0 || to < 0) return null;
     if (from === to) return [from];
     const goal = this.nodes[to].pos;
@@ -126,7 +139,8 @@ export class NavGraph {
       if (closed.has(id)) continue;
       closed.add(id);
       const base = cost.get(id)!;
-      for (const e of this.nodes[id].edges) {
+      const through = extra.get(id);
+      for (const e of through ? [...this.nodes[id].edges, ...through] : this.nodes[id].edges) {
         const c = base + e.cost;
         if (c >= (cost.get(e.to) ?? Infinity)) continue;
         cost.set(e.to, c);
@@ -138,9 +152,9 @@ export class NavGraph {
   }
 
   /** Ticks to run a route from findPath. */
-  routeCost(path: readonly number[]): number {
+  routeCost(path: readonly number[], extra: ExtraEdges = NO_EXTRA): number {
     let ticks = 0;
-    for (let i = 1; i < path.length; i++) ticks += this.edge(path[i - 1], path[i])?.cost ?? 0;
+    for (let i = 1; i < path.length; i++) ticks += this.edge(path[i - 1], path[i], extra)?.cost ?? 0;
     return ticks;
   }
 
@@ -154,14 +168,22 @@ export function buildNavGraph(level: LevelData, collision: Tracer): NavGraph {
   const all = new NavGraph();
   placeNodes(level, collision, all);
   for (let a = 0; a < all.nodes.length; a++) linkNode(all, collision, a);
-  return keepReachable(all, level.spawns.map((sp) => sp.origin));
+  return keepReachable(all, level.spawns.map((sp) => sp.origin), collision);
 }
 
+/** Nodes sampled per unreachable patch, and walkable nodes checked from each, when deciding if it's inside the map. */
+const PATCH_SAMPLES = 32;
+const VIEW_CHECKS = 12;
+/** How far (in grid cells) a patch looks for walkable nodes it can see. */
+const VIEW_CELLS = 5;
+
 /**
- * Drops nodes no spawn point can walk to: the tops of the ceiling and walls are
- * walkable surfaces too, but outside the playable space.
+ * Drops nodes nobody can get to: the tops of the ceiling and walls are walkable
+ * surfaces too, but outside the playable space. Kept: everything a spawn point can
+ * walk to, and any patch you can't walk to but which looks out over somewhere you
+ * can (a ledge only a portal reaches). The outside of a sealed map sees nothing inside.
  */
-function keepReachable(all: NavGraph, spawns: readonly Vec3[]): NavGraph {
+function keepReachable(all: NavGraph, spawns: readonly Vec3[], collision: Tracer): NavGraph {
   const seen = new Set<number>();
   const stack = spawns.map((sp) => all.nearest(sp)).filter((id) => id >= 0);
   while (stack.length > 0) {
@@ -169,6 +191,10 @@ function keepReachable(all: NavGraph, spawns: readonly Vec3[]): NavGraph {
     if (seen.has(id)) continue;
     seen.add(id);
     for (const e of all.nodes[id].edges) stack.push(e.to);
+  }
+  const walkable = new Set(seen);
+  for (const patch of patches(all, walkable)) {
+    if (overlooks(all, patch, walkable, collision)) for (const id of patch) seen.add(id);
   }
   const out = new NavGraph();
   const remap = new Map<number, number>();
@@ -182,6 +208,52 @@ function keepReachable(all: NavGraph, spawns: readonly Vec3[]): NavGraph {
     }
   }
   return out;
+}
+
+/** The nodes outside `known`, in patches linked by edges either way. */
+function patches(all: NavGraph, known: ReadonlySet<number>): number[][] {
+  const links = all.nodes.map(() => [] as number[]);
+  all.nodes.forEach((n, a) => {
+    for (const e of n.edges) {
+      links[a].push(e.to);
+      links[e.to].push(a);
+    }
+  });
+  const done = new Set<number>();
+  const out: number[][] = [];
+  for (let start = 0; start < all.nodes.length; start++) {
+    if (known.has(start) || done.has(start)) continue;
+    const patch: number[] = [];
+    const stack = [start];
+    done.add(start);
+    while (stack.length) {
+      const id = stack.pop()!;
+      patch.push(id);
+      for (const n of links[id]) {
+        if (known.has(n) || done.has(n)) continue;
+        done.add(n);
+        stack.push(n);
+      }
+    }
+    out.push(patch);
+  }
+  return out;
+}
+
+/** Some node of the patch has a clear view (eye to eye) of a walkable node nearby. */
+function overlooks(all: NavGraph, patch: readonly number[], walkable: ReadonlySet<number>, collision: Tracer): boolean {
+  const zero = vec3();
+  const eye = (p: Vec3) => vec3(p.x, p.y, p.z + EYE_HEIGHT);
+  const step = Math.max(1, Math.floor(patch.length / PATCH_SAMPLES));
+  for (let i = 0; i < patch.length; i += step) {
+    const from = all.nodes[patch[i]].pos;
+    const near = all.nodesNear(from, VIEW_CELLS).filter((id) => walkable.has(id));
+    const every = Math.max(1, Math.floor(near.length / VIEW_CHECKS));
+    for (let k = 0; k < near.length; k += every) {
+      if (collision.traceBox(eye(from), eye(all.nodes[near[k]].pos), zero, zero).fraction === 1) return true;
+    }
+  }
+  return false;
 }
 
 /** Small shifts tried when a grid point doesn't fit (a box exactly as deep as a stair step touches both risers). */

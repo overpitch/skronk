@@ -9,6 +9,7 @@ import { FISTS, holds, WEAPONS, weaponIndex } from "../sim/weapons";
 import type { PlayerState, World } from "../sim/world";
 import type { NavGraph } from "./nav";
 import { hasGunAmmo, isWeaponKind, WEAPON_WANT } from "./weaponChoice";
+import { portalLinks } from "./portalLinks";
 
 /** Below this health it's hurting: health is worth a lot more, and it retreats to it in a fight. */
 export const LOW_HEALTH = 40;
@@ -78,15 +79,17 @@ export interface PickupChoice {
 export function choosePickup(world: World, me: PlayerState, nav: NavGraph, only?: string): PickupChoice | null {
   const start = nav.nearest(me.origin);
   if (start < 0) return null;
+  // Routes may go through portals that are open now.
+  const extra = portalLinks(world, nav);
   let best: PickupChoice | null = null;
   world.pickups.forEach((pk, index) => {
     if (!pk.known || (only && pk.kind !== only)) return;
     const worth = pickupWorth(me, pk);
     if (worth <= 0) return;
     const goal = nav.nearest(pk.origin);
-    const path = nav.findPath(start, goal);
+    const path = nav.findPath(start, goal, extra);
     if (!path) return;
-    const ticks = nav.routeCost(path);
+    const ticks = nav.routeCost(path, extra);
     if (pk.availableAtTick > world.tick + ticks) return; // still gone when we'd get there
     const appeal = worth / (1 + ticks / HALF_APPEAL_TICKS);
     if (appeal >= MIN_APPEAL && (!best || appeal > best.appeal)) best = { index, appeal, ticks };
