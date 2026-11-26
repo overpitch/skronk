@@ -58,6 +58,11 @@ export interface BotSkill {
   /** How often it reconsiders its weapon, and how much better another must be to switch. */
   weaponRethinkTicks: number;
   switchMargin: number;
+  /** Fighting: share of run speed it strafes at, and the chance it stands still for a while instead. */
+  strafeSpeed: number;
+  standChance: number;
+  /** Ticks before it notices being shot from somewhere it isn't looking. */
+  noticeHitTicks: number;
 }
 
 export const DEFAULT_BOT_SKILL = 0.5;
@@ -87,6 +92,9 @@ export function botSkill(level: number): BotSkill {
     feetRockets: s >= 0.7,
     weaponRethinkTicks: Math.round(mix(90, 15, s)),
     switchMargin: mix(0.45, 0.15, s),
+    strafeSpeed: mix(0.35, 1, k),
+    standChance: mix(0.5, 0.05, s),
+    noticeHitTicks: Math.round(mix(50, 0, s)),
     lead: mix(0.2, 0.9, s),
     fovHalf: (mix(55, 80, s) * Math.PI) / 180,
   };
@@ -151,6 +159,10 @@ export class Bot {
   private weaponTick = 0;
   /** Ticks its aim has been on the target. */
   private linedUp = 0;
+  /** Shot by someone it hasn't noticed yet: who, and when it will. */
+  private shotBy: { id: PlayerId; at: number } | null = null;
+  /** Fighting this tick (strafes at its skill's speed). */
+  private dodging = false;
   /** Placing a pair of its own portals to get somewhere (null when not). */
   private job: PortalJob | null = null;
   private portalThinkTick = 0;
@@ -215,6 +227,7 @@ export class Bot {
     this.readyWeapon(world, me, fighting ? range : ROAM_DISTANCE);
     if (this.wantWeapon >= 0 && this.wantWeapon !== me.weapon) cmd.weapon = this.wantWeapon + 1;
     const spec = WEAPONS[me.weapon];
+    this.dodging = false;
 
     if (target && fighting) {
       // Fight: aim where it will be (partly), plus wander. Rockets go at the feet of someone on the ground.
@@ -243,6 +256,7 @@ export class Bot {
         steer = this.nav.steer(world, me);
       } else {
         steer = this.fightMove(world, me, target, FIGHT_RANGE[spec.id]);
+        this.dodging = true;
       }
       this.turn(lookYaw, lookPitch);
       const dist = Math.hypot(ax, ay, az);
@@ -295,11 +309,12 @@ export class Bot {
     cmd.yaw = this.yaw;
     cmd.pitch = this.pitch;
     if (steer.dir) {
-      // World direction to forward/right relative to where it's looking.
+      // World direction to forward/right relative to where it's looking; slower dodging at lower skill.
       const c = Math.cos(this.yaw);
       const s = Math.sin(this.yaw);
-      cmd.forward = steer.dir.x * c + steer.dir.y * s;
-      cmd.right = steer.dir.x * s - steer.dir.y * c;
+      const pace = this.dodging ? this.skill.strafeSpeed : 1;
+      cmd.forward = (steer.dir.x * c + steer.dir.y * s) * pace;
+      cmd.right = (steer.dir.x * s - steer.dir.y * c) * pace;
     }
     cmd.jump = steer.jump;
     return cmd;
@@ -387,12 +402,15 @@ export class Bot {
 
   /** Who it can see, and who just shot it. */
   private perceive(world: World, me: PlayerState) {
-    // Shot from anywhere: it knows roughly where from, and turns to look.
+    // Shot from anywhere: after a moment (longer at lower skill) it knows roughly where from, and turns to look.
     for (const e of world.events) {
-      if (e.type !== "hit" || e.victim !== me.id || e.attacker === me.id) continue;
-      const attacker = world.players.get(e.attacker);
-      if (!attacker || !attacker.alive) continue;
-      if (this.target === null || !this.targetVisible) {
+      if (e.type !== "hit" || e.victim !== me.id || e.attacker === me.id || this.shotBy) continue;
+      this.shotBy = { id: e.attacker, at: world.tick + this.skill.noticeHitTicks };
+    }
+    if (this.shotBy && world.tick >= this.shotBy.at) {
+      const attacker = world.players.get(this.shotBy.id);
+      this.shotBy = null;
+      if (attacker && attacker.alive && (this.target === null || !this.targetVisible)) {
         this.target = attacker.id;
         this.lastSeen = { ...attacker.origin };
         this.seenTick = world.tick;
@@ -486,15 +504,23 @@ export class Bot {
     const ux = dx / dist;
     const uy = dy / dist;
     if (world.tick >= this.strafeUntil) {
-      this.strafe = hash(this.id * 31 + world.tick) < 0.5 ? -1 : 1;
+      // Lower skill: now and then it stands still for a moment (easier to hit) instead of dodging.
+      const stand = hash(this.id * 41 + world.tick) < this.skill.standChance;
+      this.strafe = stand ? 0 : hash(this.id * 31 + world.tick) < 0.5 ? -1 : 1;
       this.strafeUntil = world.tick + 25 + Math.floor(hash(this.id * 37 + world.tick) * 50);
     }
     const range = dist > keep.far ? 0.8 : dist < keep.near ? -0.8 : 0;
     const speed = Math.hypot(me.velocity.x, me.velocity.y);
     this.blocked = me.onGround && speed < MOVE.maxSpeed * 0.2 ? this.blocked + 1 : 0;
-    if (this.blocked > 6) {
+    if (this.blocked > 6 && this.strafe !== 0) {
       this.strafe = -this.strafe;
       this.blocked = 0;
+    }
+    if (this.strafe === 0) {
+      // Standing: only closing in or backing off, if the distance is wrong.
+      if (range === 0) return { dir: null, jump: false };
+      const dir = { x: ux * Math.sign(range), y: uy * Math.sign(range) };
+      return this.safe(world, me, dir) ? { dir, jump: false } : { dir: null, jump: false };
     }
     // Preferred: strafe while closing in or backing off. At an edge, strafe along it; failing
     // that, just close in or back off; failing that, any safe way at all rather than freezing.
