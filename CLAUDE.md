@@ -36,6 +36,8 @@ Bots and difficulty are menu settings (saved per browser; controller LB/RB bots,
 
 ## Level conventions (TrenchBroom)
 
+Guides for Dave: [docs/editor-lessons.md](docs/editor-lessons.md) (lessons) and [docs/trenchbroom.md](docs/trenchbroom.md) (cheat sheet). Keep them in step with the game when map features change.
+
 - Game config: `trenchbroom/Skronk/` (GameConfig.cfg + skronk.fgd). Map format: **Quake2 (Valve)**. TrenchBroom game path = this repo's `public/` folder.
 - Textures: PNGs under `public/assets/textures/<collection>/`. Texture name in the map = `<collection>/<name>`.
 - Portal-friendly faces: surface flag `portal` (bit 0, value 1) in the face inspector. The flag is the source of truth; `base/portal_panel` is just the texture that makes it visible to players.

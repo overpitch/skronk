@@ -1,6 +1,6 @@
 # TrenchBroom for Skronk
 
-A cheat sheet for making Skronk maps. Learn the editor itself from TrenchBroom's built-in manual (Help → TrenchBroom Manual) or Quake-focused tutorials; this page covers what's different here.
+A cheat sheet for making Skronk maps. New to it? Start with the [lessons](editor-lessons.md). Learn the editor itself from TrenchBroom's built-in manual (Help → TrenchBroom Manual) or Quake-focused tutorials; this page covers what's different here.
 
 ## One-time setup
 
@@ -18,7 +18,7 @@ Skip:
 - **Compiling** (qbsp, vis, light, "build" or "run" dialogs). Skronk loads the `.map` file directly. Save and refresh the browser.
 - **Quake entities** (monsters, weapons, keys, doors, triggers, `info_player_start`). Skronk only knows the entities below.
 - **WAD textures.** Ours are PNG files.
-- **Leaks.** Quake's compiler refuses maps that aren't sealed. Skronk doesn't care, but seal your maps anyway: players and shots can fall out of a gap.
+- **Leaks.** Quake's compiler refuses maps that aren't sealed. Skronk loads them anyway, but seal your maps: players and shots can fall out of a gap. The map check (below) finds gaps and says roughly where.
 
 ## Sizes (1 unit ≈ 1 inch)
 
@@ -62,18 +62,21 @@ Right-click in the 2D or 3D view → Create Point Entity, or drag from the Entit
 | `pickup_ammo` | `amount` (default 50) |
 | `light` | `light` brightness (default 300), `_color` as `R G B` from 0 to 1 |
 
-Put spawns' boxes just above the floor, not inside it. Only the first four lights are used for now.
+Put spawns' boxes just above the floor, not inside it (origin 25 above the floor top); pickups' boxes too (origin 17 above). Only the first four lights are used for now.
+
+The map's title: the worldspawn entity's `message` key (with nothing selected, the Entity inspector shows worldspawn). The game's Map menu shows it.
 
 Groups and layers are fine: grouped brushes count as normal world geometry. Other brush entities (doors, triggers) are ignored.
 
 ## Testing a map
 
 1. Save as `public/assets/maps/<name>.map`.
-2. With `npm run dev` running, open `http://localhost:5173/?map=<name>`.
-3. Add `&navdebug` to see where bots can walk (green walk, yellow jump, orange drop). Bots need at least one spawn they can walk away from.
-4. Add `&bots=3` to watch bots use it.
+2. With `npm run dev` running and the game open at `http://localhost:5173/`, pick your map with the **Map** button in the menu. From then on, every save reloads the game with your changes.
+3. **Map check** under the menu lists problems: spawns in walls, gaps to the outside, places bots can't walk to, portal faces too small, unknown entities, missing textures. Same check in a terminal: `npm run maps:check` (all maps) or `npm run maps:check <name>`.
+4. Add `?navdebug` to the address to see where bots can walk (green walk, yellow jump, orange drop). Set **Bots** in the menu to watch them use it.
+5. To see how a whole map fits together, open the starter maps **Portal Gym** (`portal_gym.map`) and **Arena** (`arena.map`). Work on a copy: `npm run maps:starters` remakes the originals.
 
-After each change: save in TrenchBroom, refresh the browser.
+To put a map on the live site, commit and push it.
 
 ## First map checklist
 
@@ -83,4 +86,6 @@ After each change: save in TrenchBroom, refresh the browser.
 - [ ] A ledge to drop off, and a low wall to jump (40 high)
 - [ ] Two portal-flagged walls facing each other
 - [ ] One of each pickup and a couple of lights
-- [ ] Load it with `?map=<name>&navdebug` and check the green covers everywhere you expect
+- [ ] A `message` title on worldspawn
+- [ ] Map check: **all good**
+- [ ] Load it with `?navdebug` and check the green covers everywhere you expect
