@@ -190,13 +190,7 @@ export class World {
         continue;
       }
       const cmd = commands.get(p.id) ?? { ...emptyCommand(), yaw: p.yaw, pitch: p.pitch };
-      p.yaw = cmd.yaw;
-      p.pitch = cmd.pitch;
-      let open = this.openPortalsNear(p.origin);
-      if (this.unstickFromPortals(p, open)) open = this.openPortalsNear(p.origin);
-      const before = clone(p.origin);
-      playerMove(this.tracerThrough(open), p, cmd, TICK_DT);
-      this.passThroughPortals(p, open, before);
+      if (this.movePlayer(p, cmd)) this.events.push(this.lastTeleport!);
       if (p.origin.z < killZ) {
         this.kill(p, null);
         continue;
@@ -209,6 +203,25 @@ export class World {
     this.collectPickups();
     this.tick++;
   }
+
+  /**
+   * One tick of one player's movement from its command: look, walk, fall, step
+   * through portals. step() uses it for everyone; a network client uses it to
+   * predict its own player ahead of the server. Returns whether the player went
+   * through a portal (then `lastTeleport` says which); doesn't touch `events`.
+   */
+  movePlayer(p: PlayerState, cmd: PlayerCommand): boolean {
+    p.yaw = cmd.yaw;
+    p.pitch = cmd.pitch;
+    let open = this.openPortalsNear(p.origin);
+    if (this.unstickFromPortals(p, open)) open = this.openPortalsNear(p.origin);
+    const before = clone(p.origin);
+    playerMove(this.tracerThrough(open), p, cmd, TICK_DT);
+    return this.passThroughPortals(p, open, before);
+  }
+
+  /** The portal trip from the last movePlayer() that returned true. */
+  lastTeleport: Extract<SimEvent, { type: "teleport" }> | null = null;
 
   private updateWeapon(p: PlayerState, cmd: PlayerCommand) {
     if (p.fireCooldown > 0) p.fireCooldown--;
@@ -321,7 +334,7 @@ export class World {
   }
 
   /** If the player's centre crossed an open portal this tick, carry them out of its partner. */
-  private passThroughPortals(p: PlayerState, open: readonly Portal[], before: Vec3) {
+  private passThroughPortals(p: PlayerState, open: readonly Portal[], before: Vec3): boolean {
     const offset = vec3(0, 0, (PLAYER_MINS.z + PLAYER_MAXS.z) / 2);
     for (const from of open) {
       const was = portalLocal(add(before, offset), from);
@@ -338,7 +351,7 @@ export class World {
         addScaled(p.origin, from.normal, -now.n, p.origin);
         const into = dot(p.velocity, from.normal);
         if (into < 0) addScaled(p.velocity, from.normal, -into, p.velocity);
-        return;
+        return false;
       }
 
       copy(p.origin, dest);
@@ -348,9 +361,10 @@ export class World {
       if (speed > MAX_PORTAL_EXIT_SPEED) scale(p.velocity, MAX_PORTAL_EXIT_SPEED / speed, p.velocity);
       p.onGround = false;
       this.turnThrough(p, from, to);
-      this.events.push({ type: "teleport", player: p.id, from: from.id, to: to.id });
-      return;
+      this.lastTeleport = { type: "teleport", player: p.id, from: from.id, to: to.id };
+      return true;
     }
+    return false;
   }
 
   /**

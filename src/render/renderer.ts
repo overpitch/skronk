@@ -33,6 +33,11 @@ export interface RenderFrame {
   pitch: number;
   timeSeconds: number;
   dt: number;
+  /**
+   * Network game: your gun's kick and flash already played when you pressed fire
+   * (localShot), so the server's report of the shot only adds its tracer.
+   */
+  predictedFire?: boolean;
 }
 
 export class GameRenderer {
@@ -169,7 +174,7 @@ export class GameRenderer {
 
     const myOwner = playerPortalOwner(localId);
     const colorOf = (owner: PortalOwner, slot: PortalSlot) => portalColor(owner === myOwner, slot);
-    this.handleEvents(events, localId, timeSeconds, colorOf);
+    this.handleEvents(events, localId, timeSeconds, colorOf, !!frame.predictedFire);
     this.portals.update(world.portals, (p) => world.linkedPortal(p) !== null, (p) => colorOf(p.owner, p.slot), timeSeconds);
 
     // Players, interpolated between ticks. Your own body is only seen through portals.
@@ -246,6 +251,14 @@ export class GameRenderer {
     this.scene.add(this.debugLines);
   }
 
+  /** Your gun going off: kick, view punch and muzzle flash. */
+  localShot() {
+    this.viewModel.fire();
+    this.punchPitch += 0.006;
+    this.punchYaw += (Math.random() - 0.5) * 0.004;
+    this.effects.muzzleFlash(this.muzzle(this.v2));
+  }
+
   /** World position of the gun muzzle for the current view. */
   private muzzle(out: THREE.Vector3): THREE.Vector3 {
     return out
@@ -260,6 +273,7 @@ export class GameRenderer {
     localId: PlayerId,
     now: number,
     colorOf: (owner: PortalOwner, slot: PortalSlot) => THREE.ColorRepresentation,
+    predictedFire: boolean,
   ) {
     for (const e of events) {
       switch (e.type) {
@@ -280,11 +294,8 @@ export class GameRenderer {
           break;
         case "fire":
           if (e.player !== localId) break;
-          this.viewModel.fire();
-          this.punchPitch += 0.006;
-          this.punchYaw += (Math.random() - 0.5) * 0.004;
+          if (!predictedFire) this.localShot();
           this.muzzle(this.v1);
-          this.effects.muzzleFlash(this.v1);
           // The shot really leaves the eye; draw it leaving the gun and drift onto the true path.
           this.tracerOffsets.set(e.projectile, {
             offset: this.v1.clone().sub(new THREE.Vector3(e.origin.x, e.origin.y, e.origin.z)),

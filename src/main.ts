@@ -6,6 +6,7 @@ import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
 import { LocalInput } from "./client/localInput";
 import { NetClient, serverAddress } from "./client/netClient";
+import { Predictor } from "./client/prediction";
 import { DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { lerp, vec3 } from "./math/vec3";
@@ -40,7 +41,9 @@ async function start() {
   if (params.has("join")) {
     const url = serverAddress(params.get("join") ?? "");
     status.textContent = `Joining ${url}…`;
-    const joined = await NetClient.connect(url);
+    // ?lag=ms pretends the connection is that slow (round trip), to try out prediction at home.
+    const lag = Math.max(0, Math.min(1000, Number(params.get("lag")) || 0));
+    const joined = await NetClient.connect(url, undefined, lag);
     net = joined.net;
     localId = joined.welcome.id;
     serverMap = joined.welcome.map;
@@ -248,6 +251,8 @@ async function start() {
 
   const eye = vec3();
   const frameEvents: SimEvent[] = [];
+  // Network game: your own player runs ahead of the server's snapshots.
+  const predictor = new Predictor();
   let last = performance.now();
   let acc = 0;
   let fps = 0;
@@ -261,6 +266,7 @@ async function start() {
 
     acc += dt;
     let ticks = 0;
+    let firedNow = false;
     frameEvents.length = 0;
     while (acc >= TICK_DT && ticks < MAX_TICKS_PER_FRAME) {
       const local = input.command();
@@ -268,11 +274,21 @@ async function start() {
       // This tick's events: from our own step, or from the server's snapshots.
       const tickEvents: SimEvent[] = [];
       if (net) {
-        net.sendCommand(mine);
-        for (const snap of net.take()) {
-          applySnapshot(world, snap);
-          tickEvents.push(...snap.events);
+        predictor.sent(net.sendCommand(mine), mine);
+        let ack: number | null = null;
+        for (const received of net.take()) {
+          applySnapshot(world, received.snap);
+          // Your own portal trips were already shown (and your view turned) by prediction.
+          tickEvents.push(...received.snap.events.filter((e) => !(e.type === "teleport" && e.player === localId)));
+          ack = received.ack;
         }
+        const predicted = predictor.tick(world, me, ack);
+        predictor.writeTo(me);
+        if (predicted.teleported) {
+          input.yaw = me.yaw;
+          input.pitch = me.pitch;
+        }
+        if (predicted.fired) firedNow = true;
       } else {
         const commands = new Map<PlayerId, PlayerCommand>([[localId, mine]]);
         for (const bot of bots) commands.set(bot.id, bot.command(world));
@@ -300,10 +316,21 @@ async function start() {
     const alpha = acc / TICK_DT;
     lerp(me.prevOrigin, me.origin, alpha, eye);
     eye.z += EYE_HEIGHT - (me.alive ? 0 : DEAD_EYE_DROP);
+    if (net) {
+      // A correction from the server fades in rather than jolting the view.
+      predictor.smooth(dt);
+      eye.x += predictor.offset.x;
+      eye.y += predictor.offset.y;
+      eye.z += predictor.offset.z;
+    }
     const time = now / 1000;
-    renderer.render({ world, localId, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt }, frameEvents);
+    renderer.render({ world, localId, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt, predictedFire: !!net }, frameEvents);
+    if (firedNow) renderer.localShot();
     hud.update(world, me, frameEvents, dt);
-    sfx.play(frameEvents, localId, eye, input.yaw);
+    // In a network game your shot's sound plays when you fire, not when the server's word comes back.
+    const heard = net ? frameEvents.filter((e) => !(e.type === "fire" && e.player === localId)) : frameEvents;
+    if (firedNow) heard.push({ type: "fire", player: localId, projectile: -1, origin: { ...eye }, dir: { x: 0, y: 0, z: 0 } });
+    sfx.play(heard, localId, eye, input.yaw);
 
     fpsFrames++;
     fpsTime += dt;
@@ -323,7 +350,7 @@ async function start() {
   };
   requestAnimationFrame(frame);
 
-  if (import.meta.env.DEV) Object.assign(window, { skronk: { world, input, renderer, level, bots, nav, net } });
+  if (import.meta.env.DEV) Object.assign(window, { skronk: { world, input, renderer, level, bots, nav, net, predictor } });
 }
 
 /** Runs the map checker and shows the results under the menu (dev server only). */

@@ -46,8 +46,10 @@ export interface RunningServer {
 interface Client {
   socket: WebSocket;
   id: PlayerId;
-  queue: PlayerCommand[];
+  queue: { seq: number; cmd: PlayerCommand }[];
   last: PlayerCommand;
+  /** seq of the last command used (-1 before the first). */
+  ack: number;
   /** Ticks since a command arrived. */
   idle: number;
 }
@@ -101,13 +103,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         const id = nextId++;
         world.addPlayer(id);
         names.set(id, (msg.name ?? "").trim().slice(0, 20) || `Player ${clients.size + 1}`);
-        client = { socket, id, queue: [], last: emptyCommand(), idle: 0 };
+        client = { socket, id, queue: [], last: emptyCommand(), ack: -1, idle: 0 };
         clients.add(client);
         send(socket, { t: "welcome", id, map: options.map, names: roster() });
         broadcast({ t: "roster", names: roster() });
         log(`${names.get(id)} joined (${clients.size} connected)`);
       } else if (msg.t === "cmd" && client) {
-        client.queue.push(msg.cmd);
+        client.queue.push({ seq: msg.seq, cmd: msg.cmd });
         if (client.queue.length > MAX_QUEUED) client.queue.splice(0, client.queue.length - MAX_QUEUED);
       }
     });
@@ -127,7 +129,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     for (const c of clients) {
       const next = c.queue.shift();
       c.idle = next ? 0 : c.idle + 1;
-      if (next) c.last = next;
+      if (next) {
+        c.last = next.cmd;
+        c.ack = next.seq;
+      }
       // Nothing arrived this tick: keep doing what they were doing (a portal press is a one-off),
       // and after a while, stand still looking the same way.
       else if (c.idle > IDLE_STOP_TICKS) c.last = { ...emptyCommand(), yaw: c.last.yaw, pitch: c.last.pitch };
@@ -136,7 +141,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     }
     for (const b of bots) commands.set(b.id, b.command(world));
     world.step(commands);
-    if (clients.size > 0) broadcast({ t: "snap", snap: captureSnapshot(world) });
+    if (clients.size > 0) broadcast({ t: "snap", snap: captureSnapshot(world), acks: [...clients].map((c) => [c.id, c.ack]) });
   };
 
   // Fixed-rate loop. setTimeout drifts, so catch up from the clock (never more than a few ticks).

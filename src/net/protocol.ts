@@ -67,6 +67,10 @@ export type ServerMessage =
   | { t: "welcome"; id: PlayerId; map: string; names: [PlayerId, string][] }
   /** Someone joined or left: everyone's names. */
   | { t: "roster"; names: [PlayerId, string][] }
-  | { t: "snap"; snap: WorldSnapshot }
+  /**
+   * One tick of the world. `acks`: for each player, the `seq` of the last command the
+   * server used, so that player's browser knows which of its commands are still in flight.
+   */
+  | { t: "snap"; snap: WorldSnapshot; acks: [PlayerId, number][] }
   /** Can't join (server full, say). */
   | { t: "refused"; reason: string };

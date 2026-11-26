@@ -5,6 +5,9 @@ import { Bot } from "../src/bots/bot";
 import { buildNavGraph } from "../src/bots/nav";
 import type { ServerMessage, WorldSnapshot } from "../src/net/protocol";
 import { applySnapshot, captureSnapshot } from "../src/net/snapshot";
+import { Predictor } from "../src/client/prediction";
+import type { PlayerCommand } from "../src/sim/command";
+import { set } from "../src/math/vec3";
 import { emptyCommand } from "../src/sim/command";
 import { World } from "../src/sim/world";
 import { loadTestMap } from "./helpers";
@@ -44,6 +47,108 @@ describe("snapshots", () => {
     server.removePlayer(3);
     applySnapshot(client, JSON.parse(JSON.stringify(captureSnapshot(server))));
     expect(client.players.has(3)).toBe(false);
+  });
+});
+
+describe("prediction", () => {
+  /**
+   * A server world and a client mirror joined by a delay of `delay` ticks each way.
+   * Runs `commands`, returns where the client predicted itself and where the server had it,
+   * after each command, plus the largest correction the client had to smooth over.
+   */
+  function play(commands: PlayerCommand[], delay: number, setup?: (server: World) => void) {
+    const level = loadTestMap();
+    const server = new World(level);
+    const client = new World(level);
+    server.addPlayer(1);
+    setup?.(server);
+    // Let the player settle onto the floor first: a spawn sits a unit up, and the server moves
+    // it during the ticks before the first command arrives, which the client can't predict.
+    for (let i = 0; i < 10; i++) server.step(new Map());
+    const me = client.addPlayer(1);
+    applySnapshot(client, captureSnapshot(server));
+    const predictor = new Predictor();
+    const toServer: { at: number; seq: number; cmd: PlayerCommand }[] = [];
+    const toClient: { at: number; snap: ReturnType<typeof captureSnapshot>; ack: number }[] = [];
+    const predicted = new Map<number, number[]>();
+    const actual = new Map<number, number[]>();
+    let ack = -1;
+    let worst = 0;
+    for (let t = 0; t < commands.length + 3 * delay; t++) {
+      // Client: send this tick's command and predict.
+      const cmd = commands[Math.min(t, commands.length - 1)];
+      if (t < commands.length) {
+        predictor.sent(t, cmd);
+        toServer.push({ at: t + delay, seq: t, cmd });
+      }
+      let gotAck: number | null = null;
+      while (toClient.length && toClient[0].at <= t) {
+        const m = toClient.shift()!;
+        applySnapshot(client, m.snap);
+        gotAck = m.ack;
+      }
+      if (t < commands.length) {
+        predictor.tick(client, me, gotAck);
+        predictor.writeTo(me);
+        predicted.set(t, [me.origin.x, me.origin.y, me.origin.z]);
+        worst = Math.max(worst, Math.hypot(predictor.offset.x, predictor.offset.y, predictor.offset.z));
+      }
+      // Server: use the command that's arrived (one a tick), step, send a snapshot back.
+      const arrived = toServer.length && toServer[0].at <= t ? toServer.shift()! : null;
+      if (arrived) ack = arrived.seq;
+      server.step(new Map(arrived ? [[1, arrived.cmd]] : []));
+      if (arrived) {
+        const p = server.players.get(1)!;
+        actual.set(arrived.seq, [p.origin.x, p.origin.y, p.origin.z]);
+      }
+      toClient.push({ at: t + delay, snap: JSON.parse(JSON.stringify(captureSnapshot(server))), ack });
+    }
+    return { predicted, actual, worst, server };
+  }
+
+  it("predicts walking exactly, so nothing needs correcting", () => {
+    const walk = Array.from({ length: 120 }, (_, i) => ({ ...emptyCommand(), forward: 1, yaw: i * 0.02 }));
+    const { predicted, actual, worst } = play(walk, 5);
+    for (const [seq, at] of actual) {
+      const p = predicted.get(seq)!;
+      expect(Math.hypot(p[0] - at[0], p[1] - at[1], p[2] - at[2])).toBeLessThan(1e-6);
+    }
+    expect(worst).toBeLessThan(1e-6);
+  });
+
+  it("predicts a trip through a portal at the same moment the server makes it", () => {
+    const toEast = Array.from({ length: 90 }, () => ({ ...emptyCommand(), forward: 1, yaw: 0 }));
+    const { predicted, actual } = play(toEast, 5, (server) => {
+      // A linked pair on the east and west walls, and player 1 walking into the east one.
+      const p = server.players.get(1)!;
+      set(p.origin, 0, 0, 24.5);
+      server.step(new Map([[1, { ...emptyCommand(), yaw: Math.atan2(200, 512), portal: true }]]));
+      for (let i = 0; i < 20; i++) server.step(new Map([[1, emptyCommand()]]));
+      server.step(new Map([[1, { ...emptyCommand(), yaw: Math.atan2(-150, -512), portal: true }]]));
+      for (let i = 0; i < 20; i++) server.step(new Map([[1, emptyCommand()]]));
+      set(p.origin, 400, 200, 24.5);
+      set(p.prevOrigin, 400, 200, 24.5);
+      set(p.velocity, 0, 0, 0);
+    });
+    const hop = [...actual].find(([, at]) => at[0] < 0)![0]; // first command that put it on the west side
+    expect(predicted.get(hop)![0]).toBeLessThan(0);
+    expect(predicted.get(hop - 1)![0]).toBeGreaterThan(0);
+    for (const [seq, at] of actual) expect(predicted.get(seq)![0]).toBeCloseTo(at[0], 6);
+  });
+
+  it("smooths over a knock it couldn't have predicted, and ends up where the server says", () => {
+    const stand = Array.from({ length: 60 }, () => emptyCommand());
+    const { predicted, actual, worst } = play(stand, 5, (server) => {
+      // Something the client can't know about: the server shoves the player halfway through.
+      const step = server.step.bind(server);
+      server.step = (c) => {
+        if (server.tick === 30) server.players.get(1)!.velocity.x += 300;
+        step(c);
+      };
+    });
+    expect(worst).toBeGreaterThan(1); // there was a correction to smooth
+    const last = Math.max(...actual.keys());
+    expect(predicted.get(last)![0]).toBeCloseTo(actual.get(last)![0], 6);
   });
 });
 
