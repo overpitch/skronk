@@ -27,12 +27,21 @@
       <p>Click to play &middot; or press A on a controller</p>
       <p class="keys">WASD move &middot; Shift+W run &middot; Space jump &middot; Mouse look &middot; Left click shoot &middot; Right click or E portal &middot; Esc release mouse</p>
       <p class="keys">Controller: click left stick to run &middot; right trigger shoots &middot; left trigger portal &middot; Menu button pauses</p>
-      <button id="invert-look" class="setting" type="button" aria-pressed="false">Invert look: Off</button>
-      <p class="keys">Click, or press Y on a controller</p>
+      <div class="setting-row">
+        <button id="bot-count" class="setting" type="button">Bots: 0</button>
+        <button id="difficulty" class="setting" type="button">Difficulty: Normal</button>
+        <button id="invert-look" class="setting" type="button" aria-pressed="false">Invert look: Off</button>
+      </div>
+      <p class="keys">Click to change &middot; controller: LB / RB bots &middot; X difficulty &middot; Y invert look</p>
       <label class="setting slider" for="mouse-sens">
         Mouse sensitivity
         <input id="mouse-sens" type="range" min="0.2" max="4" step="0.05" value="1" />
         <output id="mouse-sens-value" for="mouse-sens">1.00</output>
+      </label>
+      <label class="setting slider" for="volume">
+        Volume
+        <input id="volume" type="range" min="0" max="1" step="0.05" value="1" />
+        <output id="volume-value" for="volume">100%</output>
       </label>
       <p id="status"></p>
     </div>

@@ -12,7 +12,10 @@ const PITCH_LIMIT = (89 * Math.PI) / 180;
 
 // Standard Gamepad mapping indices.
 const PAD_A = 0;
+const PAD_X = 2;
 const PAD_Y = 3;
+const PAD_LB = 4;
+const PAD_RB = 5;
 const PAD_LT = 6;
 const PAD_RT = 7;
 const PAD_MENU = 9;
@@ -39,6 +42,10 @@ export class LocalInput {
   onDeactivate: () => void = () => {};
   /** Gamepad Y while the menu is open. */
   onToggleInvertLook: () => void = () => {};
+  /** Gamepad X while the menu is open. */
+  onCycleDifficulty: () => void = () => {};
+  /** Gamepad LB (-1) / RB (+1) while the menu is open. */
+  onChangeBots: (delta: number) => void = () => {};
 
   private keys = new Set<string>();
   /**
@@ -116,10 +123,15 @@ export class LocalInput {
     this.padStatus = pad.mapping === "standard" ? name : `${name} (non-standard layout, buttons may be wrong)`;
     const pressed = (i: number) => !!pad.buttons[i]?.pressed;
     const justPressed = (i: number) => pressed(i) && !this.padPrev[i];
-    const anyJustPressed = (except: number) => pad.buttons.some((_, i) => i !== except && justPressed(i));
+    // Menu buttons change settings; any other button starts play.
+    const menuButtons = [PAD_X, PAD_Y, PAD_LB, PAD_RB];
+    const otherJustPressed = () => pad.buttons.some((_, i) => !menuButtons.includes(i) && justPressed(i));
     if (menuOpen) {
       if (justPressed(PAD_Y)) this.onToggleInvertLook();
-      else if (anyJustPressed(PAD_Y)) this.onActivate();
+      else if (justPressed(PAD_X)) this.onCycleDifficulty();
+      else if (justPressed(PAD_LB)) this.onChangeBots(-1);
+      else if (justPressed(PAD_RB)) this.onChangeBots(1);
+      else if (otherJustPressed()) this.onActivate();
     } else if (justPressed(PAD_MENU)) {
       this.onDeactivate();
     }

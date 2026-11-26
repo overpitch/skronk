@@ -10,7 +10,14 @@ const HEARING_DISTANCE = 1600;
 export class Sfx {
   private ctx: AudioContext | null = null;
   private master!: GainNode;
+  private volume = 1;
   private noise!: AudioBuffer;
+
+  /** 0 silent, 1 full. */
+  setVolume(volume: number) {
+    this.volume = volume;
+    if (this.ctx) this.master.gain.value = 0.45 * volume;
+  }
 
   unlock() {
     if (!this.ctx) {
@@ -18,7 +25,7 @@ export class Sfx {
       if (!Ctor) return;
       this.ctx = new Ctor();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.45;
+      this.master.gain.value = 0.45 * this.volume;
       this.master.connect(this.ctx.destination);
       const len = Math.floor(this.ctx.sampleRate * 0.5);
       this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);

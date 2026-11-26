@@ -90,6 +90,13 @@ body {
   pointer-events: auto;
 }
 
+#overlay .setting-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
 #overlay .setting.slider {
   display: flex;
   align-items: center;

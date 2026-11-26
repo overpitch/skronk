@@ -112,6 +112,11 @@ export class Bot {
     this.skill = botSkill(skill);
   }
 
+  /** Change how sharp it is, mid-game (the menu's difficulty). */
+  setSkill(level: number) {
+    this.skill = botSkill(level);
+  }
+
   /** The route it's following, for the debug view. */
   get currentRoute(): readonly number[] {
     return this.nav.currentRoute;

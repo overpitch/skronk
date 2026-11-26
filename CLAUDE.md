@@ -16,8 +16,9 @@ Live build: https://overpitch.github.io/skronk/ (every push to `main` runs tests
 Test in desktop Chrome only (the built-in browser pane is Chromium too). Safari is not a test target. The Xbox browser is Edge, also Chromium, so Chrome is the closest stand-in.
 
 Load a map with `?map=<name>` (file in `public/assets/maps/<name>.map`). Default: `test_box`.
+Sound: `?mute` plays nothing this visit (not saved). Use it for every browser-pane test, and close the tab afterwards.
 Practice targets: `?dummies=N` (default 1, or 0 when there are bots); add `?dummyfire` to make them shoot back, `?dummyspeed=0..1` for strafe speed (default 0.35, 0 stands still).
-Bots: `?bots=N` bots that roam and fight (milestone 4); `?botskill=0..1` how sharp they are (default 0.5); `?navdebug` draws their walk graph (green walk, yellow jump, orange drop). The walk graph is built from the level at load (`src/bots/nav.ts`), no waypoints to place.
+Bots and difficulty are menu settings (saved per browser; controller LB/RB bots, X difficulty). Address options override them for one visit: `?bots=N` bots that roam, fight and use pickups (milestone 4); `?botskill=0..1` instead of the difficulty; `?navdebug` draws their walk graph (green walk, yellow jump, orange drop). The walk graph is built from the level at load (`src/bots/nav.ts`), no waypoints to place.
 
 ## Architecture rules
 

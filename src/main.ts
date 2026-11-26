@@ -1,10 +1,10 @@
 import { buildNavGraph, type NavGraph } from "./bots/nav";
-import { Bot, DEFAULT_BOT_SKILL } from "./bots/bot";
+import { Bot } from "./bots/bot";
 import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
 import { LocalInput } from "./client/localInput";
-import { loadSettings, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
+import { DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { lerp, vec3 } from "./math/vec3";
 import { GameRenderer } from "./render/renderer";
@@ -27,14 +27,18 @@ const debug = document.getElementById("debug")!;
 async function start() {
   const params = new URLSearchParams(location.search);
   const mapName = params.get("map") ?? "test_box";
-  // ?bots=N bots that roam and fight; ?botskill=0..1 how sharp they are; ?navdebug draws their walk graph.
-  const botCount = Math.max(0, Math.min(8, Number(params.get("bots") ?? 0) || 0));
+  const settings = loadSettings();
+  // Address options override the menu's saved choices for this visit (handy for testing):
+  // ?bots=N bots that roam and fight; ?botskill=0..1 instead of the difficulty;
+  // ?navdebug draws the bots' walk graph; ?mute plays no sound.
+  const botCount = params.has("bots") ? Math.max(0, Math.min(MAX_BOTS, Number(params.get("bots")) || 0)) : settings.bots;
   const skillParam = Number(params.get("botskill"));
-  const botSkillLevel = params.has("botskill") && Number.isFinite(skillParam) ? Math.max(0, Math.min(1, skillParam)) : DEFAULT_BOT_SKILL;
+  let skillOverride = params.has("botskill") && Number.isFinite(skillParam) ? Math.max(0, Math.min(1, skillParam)) : null;
   const navDebug = params.has("navdebug");
-  // ?dummies=N practice targets (default 1, or 0 when there are bots); ?dummyfire makes them shoot back;
+  let muted = params.has("mute");
+  // ?dummies=N practice targets (default: one when there are no bots); ?dummyfire makes them shoot back;
   // ?dummyspeed=0..1 sets how fast they strafe (0 stands still).
-  const dummyCount = Math.max(0, Math.min(8, Number(params.get("dummies") ?? (botCount > 0 ? 0 : 1)) || 0));
+  const dummiesParam = params.has("dummies") ? Math.max(0, Math.min(8, Number(params.get("dummies")) || 0)) : null;
   const dummiesShoot = params.has("dummyfire");
   const speedParam = Number(params.get("dummyspeed"));
   const dummySpeed = params.has("dummyspeed") && Number.isFinite(speedParam) ? Math.max(0, Math.min(1, speedParam)) : DUMMY_DEFAULT_SPEED;
@@ -44,26 +48,44 @@ async function start() {
 
   const world = new World(level);
   const me = world.addPlayer(LOCAL_PLAYER);
+  // Everyone who isn't you: practice dummies and bots, both just command sources.
   const bots: { id: PlayerId; command(world: World): PlayerCommand }[] = [];
+  const dummies: TargetDummy[] = [];
+  const fighters: Bot[] = [];
   const names = new Map<PlayerId, string>([[LOCAL_PLAYER, "yourself"]]);
-  for (let i = 0; i < dummyCount; i++) {
-    const id = LOCAL_PLAYER + 1 + i;
-    world.addPlayer(id);
-    bots.push(new TargetDummy(id, dummiesShoot, dummySpeed));
-    names.set(id, dummyCount > 1 ? `Dummy ${i + 1}` : "the dummy");
-  }
+  let nextId = LOCAL_PLAYER + 1;
   let nav: NavGraph | null = null;
   if (botCount > 0 || navDebug) {
     status.textContent = `Mapping ${mapName} for bots…`;
     await new Promise((r) => setTimeout(r)); // let the status show before the build blocks
     nav = buildNavGraph(level, world.collision);
   }
-  for (let i = 0; i < botCount; i++) {
-    const id = LOCAL_PLAYER + 1 + dummyCount + i;
-    world.addPlayer(id);
-    bots.push(new Bot(id, nav!, botSkillLevel));
-    names.set(id, `Bot ${i + 1}`);
-  }
+  const botSkillLevel = () => skillOverride ?? difficultyOf(settings.difficulty).skill;
+  /** Adds or removes players so there are n of them, made by `make`. */
+  const resize = <T extends { id: PlayerId }>(list: T[], n: number, make: (id: PlayerId) => T) => {
+    while (list.length > n) {
+      const gone = list.pop()!;
+      world.removePlayer(gone.id);
+      names.delete(gone.id);
+    }
+    while (list.length < n) {
+      const id = nextId++;
+      world.addPlayer(id);
+      list.push(make(id));
+    }
+  };
+  /** n bots; with none, a practice dummy (unless ?dummies says otherwise). */
+  const setBots = (n: number) => {
+    if (n > 0 && !nav) nav = buildNavGraph(level, world.collision);
+    resize(fighters, n, (id) => new Bot(id, nav!, botSkillLevel()));
+    fighters.forEach((b, i) => names.set(b.id, `Bot ${i + 1}`));
+    const dummyCount = dummiesParam ?? (n > 0 ? 0 : 1);
+    resize(dummies, dummyCount, (id) => new TargetDummy(id, dummiesShoot, dummySpeed));
+    dummies.forEach((d, i) => names.set(d.id, dummyCount > 1 ? `Dummy ${i + 1}` : "the dummy"));
+    bots.length = 0;
+    bots.push(...dummies, ...fighters);
+  };
+  setBots(botCount);
   const nameOf = (id: PlayerId) => names.get(id) ?? `Player ${id}`;
   const renderer = new GameRenderer(canvas, `${assets}/textures`);
   renderer.loadLevel(level);
@@ -91,10 +113,13 @@ async function start() {
     if (document.pointerLockElement) document.exitPointerLock();
   };
 
-  const settings = loadSettings();
   const invertButton = document.getElementById("invert-look") as HTMLButtonElement;
   const sensSlider = document.getElementById("mouse-sens") as HTMLInputElement;
   const sensValue = document.getElementById("mouse-sens-value")!;
+  const botButton = document.getElementById("bot-count") as HTMLButtonElement;
+  const difficultyButton = document.getElementById("difficulty") as HTMLButtonElement;
+  const volumeSlider = document.getElementById("volume") as HTMLInputElement;
+  const volumeValue = document.getElementById("volume-value")!;
   sensSlider.min = String(MOUSE_SENSITIVITY_RANGE.min);
   sensSlider.max = String(MOUSE_SENSITIVITY_RANGE.max);
   sensSlider.step = String(MOUSE_SENSITIVITY_RANGE.step);
@@ -105,17 +130,53 @@ async function start() {
     sensValue.textContent = settings.mouseSensitivity.toFixed(2);
     invertButton.textContent = `Invert look: ${settings.invertLook ? "On" : "Off"}`;
     invertButton.setAttribute("aria-pressed", String(settings.invertLook));
+    botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
+    difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
+    const volume = muted ? 0 : settings.volume;
+    sfx.setVolume(volume);
+    volumeSlider.value = String(volume);
+    volumeValue.textContent = `${Math.round(volume * 100)}%`;
   };
+  /** Buttons are clicked with the mouse; take focus off so Space (jump) can't press them again. */
+  const onClick = (button: HTMLButtonElement, action: () => void) =>
+    button.addEventListener("click", () => {
+      action();
+      button.blur();
+    });
+  const changeBots = (n: number) => {
+    settings.bots = Math.max(0, Math.min(MAX_BOTS, n));
+    saveSettings(settings);
+    setBots(settings.bots);
+    applySettings();
+  };
+  // Click goes round 0..MAX; the controller's LB / RB step down and up.
+  onClick(botButton, () => changeBots((fighters.length + 1) % (MAX_BOTS + 1)));
+  input.onChangeBots = (delta) => changeBots(fighters.length + delta);
+  const cycleDifficulty = () => {
+    const i = DIFFICULTIES.findIndex((d) => d.id === settings.difficulty);
+    settings.difficulty = DIFFICULTIES[(i + 1) % DIFFICULTIES.length].id;
+    skillOverride = null;
+    saveSettings(settings);
+    for (const b of fighters) b.setSkill(botSkillLevel());
+    applySettings();
+  };
+  onClick(difficultyButton, cycleDifficulty);
+  input.onCycleDifficulty = cycleDifficulty;
+  volumeSlider.addEventListener("input", () => {
+    settings.volume = Number(volumeSlider.value);
+    muted = false;
+    applySettings();
+  });
+  volumeSlider.addEventListener("change", () => {
+    saveSettings(settings);
+    volumeSlider.blur();
+  });
   const toggleInvertLook = () => {
     settings.invertLook = !settings.invertLook;
     saveSettings(settings);
     applySettings();
   };
-  invertButton.addEventListener("click", () => {
-    toggleInvertLook();
-    // Otherwise Space (jump) would press the focused button again later.
-    invertButton.blur();
-  });
+  onClick(invertButton, toggleInvertLook);
   input.onToggleInvertLook = toggleInvertLook;
   sensSlider.addEventListener("input", () => {
     settings.mouseSensitivity = Number(sensSlider.value);
