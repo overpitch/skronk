@@ -17,7 +17,9 @@ import { GameRenderer } from "./render/renderer";
 import type { LevelData } from "./level/types";
 import type { PlayerCommand } from "./sim/command";
 import type { PlayerId, SimEvent } from "./sim/events";
+import { FREE_PLAY, MATCH_PRESETS, matchPreset, REMATCH_READY_TICKS, type MatchRules } from "./sim/match";
 import { EYE_HEIGHT } from "./sim/movement";
+import { secondsToTicks } from "./sim/tick";
 import { TICK_DT, World } from "./sim/world";
 
 /** Your player id in a game on this machine (a network game gets one from the server). */
@@ -77,7 +79,17 @@ async function start() {
   status.textContent = `Loading ${mapTitle}…`;
   const level = await new TrenchBroomLoader().load(`${assets}/maps/${mapName}.map`);
 
-  const world = new World(level);
+  // Match rules: the menu's choice when bots play; practice on your own has no limits.
+  // ?fraglimit=N and ?timelimit=minutes set them for this visit (handy for testing the end screen).
+  const rulesParam: MatchRules | null =
+    params.has("fraglimit") || params.has("timelimit")
+      ? {
+          fragLimit: Math.max(0, Math.floor(Number(params.get("fraglimit")) || 0)),
+          timeLimitTicks: secondsToTicks(Math.max(0, Number(params.get("timelimit")) || 0) * 60),
+        }
+      : null;
+  const rulesFor = (botsPlaying: number): MatchRules => rulesParam ?? (botsPlaying > 0 ? matchPreset(settings.match).rules : FREE_PLAY);
+  const world = new World(level, rulesFor(botCount));
   // In a network game this is a mirror of the server's world, overwritten by every snapshot.
   const me = world.addPlayer(localId);
   // Everyone who isn't you: practice dummies and bots, both just command sources.
@@ -116,6 +128,10 @@ async function start() {
     dummies.forEach((d, i) => names.set(d.id, dummyCount > 1 ? `Dummy ${i + 1}` : "the dummy"));
     bots.length = 0;
     bots.push(...dummies, ...fighters);
+    // Bots joining practice (or all leaving) changes the rules: a fresh match.
+    const rules = rulesFor(n);
+    const now = world.match.rules;
+    if (!net && (rules.fragLimit !== now.fragLimit || rules.timeLimitTicks !== now.timeLimitTicks)) world.rematch(rules);
   };
   setBots(botCount);
   const nameOf = (id: PlayerId) => (id === localId ? "yourself" : (net?.names.get(id) ?? names.get(id) ?? `Player ${id}`));
@@ -130,7 +146,7 @@ async function start() {
 
   const input = new LocalInput(canvas);
   input.yaw = me.yaw;
-  const hud = new Hud(nameOf);
+  const hud = new Hud(nameOf, !!net);
   const sfx = new Sfx();
   // Audio needs a user gesture; gamepad presses may not count, so take any key or click too.
   for (const type of ["pointerdown", "keydown"]) window.addEventListener(type, () => sfx.unlock());
@@ -155,6 +171,7 @@ async function start() {
   const botButton = document.getElementById("bot-count") as HTMLButtonElement;
   const mapButton = document.getElementById("map-choice") as HTMLButtonElement;
   const difficultyButton = document.getElementById("difficulty") as HTMLButtonElement;
+  const matchButton = document.getElementById("match-choice") as HTMLButtonElement;
   const volumeSlider = document.getElementById("volume") as HTMLInputElement;
   const volumeValue = document.getElementById("volume-value")!;
   const networkButton = document.getElementById("network") as HTMLButtonElement;
@@ -173,6 +190,8 @@ async function start() {
     mapButton.textContent = `Map: ${mapTitle}`;
     botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
     difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
+    const preset = matchPreset(settings.match).label;
+    matchButton.textContent = rulesParam ? "Match: set in the address" : fighters.length > 0 ? `Match: ${preset}` : `Match: ${preset} (when bots play)`;
     const modeName = quality.profile.mode === "full" ? "Full" : "Light";
     graphicsButton.textContent = qualitySetting === "auto" ? `Graphics: Auto (${modeName})` : `Graphics: ${modeName}`;
     graphicsButton.title = `${modeName}: ${quality.reason}`;
@@ -188,7 +207,8 @@ async function start() {
       mapButton.textContent = `Map: ${mapTitle} (server)`;
       botButton.textContent = "Bots: set on the server";
       difficultyButton.textContent = "Difficulty: set on the server";
-      for (const b of [mapButton, botButton, difficultyButton]) b.disabled = true;
+      matchButton.textContent = "Match: set on the server";
+      for (const b of [mapButton, botButton, difficultyButton, matchButton]) b.disabled = true;
     }
     const volume = muted ? 0 : settings.volume;
     sfx.setVolume(volume);
@@ -234,6 +254,17 @@ async function start() {
     applySettings();
   };
   onClick(difficultyButton, cycleDifficulty);
+  // Match rules: the next choice, and a fresh match with it if bots are playing.
+  const cycleMatch = () => {
+    if (net) return;
+    const i = MATCH_PRESETS.findIndex((m) => m.id === settings.match);
+    settings.match = MATCH_PRESETS[(i + 1) % MATCH_PRESETS.length].id;
+    saveSettings(settings);
+    if (!rulesParam && fighters.length > 0) world.rematch(rulesFor(fighters.length));
+    applySettings();
+  };
+  onClick(matchButton, cycleMatch);
+  input.onCycleMatch = cycleMatch;
   input.onCycleDifficulty = cycleDifficulty;
   volumeSlider.addEventListener("input", () => {
     settings.volume = Number(volumeSlider.value);
@@ -317,13 +348,16 @@ async function start() {
   let fps = 0;
   let fpsFrames = 0;
   let fpsTime = 0;
+  /** Fire or jump held last tick: on the end screen, a fresh press asks for a rematch. */
+  let rematchHeld = true;
 
   const frame = (now: number) => {
     const dt = Math.min(0.25, (now - last) / 1000);
     last = now;
     input.update(dt, !active);
 
-    acc += dt;
+    // On your own the game waits while the menu is open (a network game can't).
+    acc = !net && !active ? 0 : acc + dt;
     let ticks = 0;
     let firedNow = false;
     frameEvents.length = 0;
@@ -349,6 +383,10 @@ async function start() {
         }
         if (predicted.fired) firedNow = true;
       } else {
+        const press = mine.fire || mine.jump;
+        const m = world.match;
+        if (m.phase === "over" && press && !rematchHeld && world.tick - m.endTick >= REMATCH_READY_TICKS) world.rematch();
+        rematchHeld = press;
         const commands = new Map<PlayerId, PlayerCommand>([[localId, mine]]);
         for (const bot of bots) commands.set(bot.id, bot.command(world));
         world.step(commands);

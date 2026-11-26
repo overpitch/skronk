@@ -16,6 +16,7 @@ type PortalShot = Extract<SimEvent, { type: "portalShot" }>;
 function setup(x = 0, y = 0) {
   const world = new World(loadTestMap());
   const p = world.addPlayer(1);
+  p.fireCooldown = 0; // gun already up
   place(p, x, y);
   return { world, p };
 }
@@ -303,6 +304,7 @@ describe("shooting through portals", () => {
   it("hits another player on the far side", () => {
     const { world, p } = linked();
     const other = world.addPlayer(2);
+    other.protectedUntil = 0;
     place(p, 0, 25);
     // On the exit path, out of the west portal heading (512, 175).
     place(other, -400, -150 + (175 / 512) * 112);

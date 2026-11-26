@@ -3,6 +3,7 @@
  * (private windows, Xbox Edge quirks), so every access falls back to defaults.
  */
 import type { QualitySetting } from "../render/quality";
+import { MATCH_PRESETS, type MatchPresetId } from "../sim/match";
 
 export type Difficulty = "beginner" | "easy" | "normal" | "hard";
 
@@ -33,6 +34,8 @@ export interface Settings {
   name: string;
   /** Graphics: Full, Light, or Auto (picked for this device). */
   quality: QualitySetting;
+  /** Match rules against bots (practice with no bots has no limits). */
+  match: MatchPresetId;
 }
 
 export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
@@ -40,7 +43,7 @@ export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
 const STORAGE_KEY = "skronk.settings";
 
 export function defaultSettings(): Settings {
-  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box", name: "", quality: "auto" };
+  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box", name: "", quality: "auto", match: "standard" };
 }
 
 export const difficultyOf = (id: Difficulty) => DIFFICULTIES.find((d) => d.id === id) ?? DIFFICULTIES[2];
@@ -60,6 +63,7 @@ export function loadSettings(): Settings {
     if (typeof saved.map === "string" && /^[\w-]+$/.test(saved.map)) settings.map = saved.map;
     if (typeof saved.name === "string") settings.name = cleanName(saved.name);
     if (["auto", "full", "light"].includes(saved.quality)) settings.quality = saved.quality;
+    if (MATCH_PRESETS.some((m) => m.id === saved.match)) settings.match = saved.match;
   } catch {
     // Unreadable storage: keep defaults.
   }

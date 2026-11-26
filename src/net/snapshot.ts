@@ -30,9 +30,11 @@ export function captureSnapshot(world: World): WorldSnapshot {
     fireCooldown: p.fireCooldown,
     portalCooldown: p.portalCooldown,
     portalHeld: p.portalHeld,
+    protectedUntil: p.protectedUntil,
   }));
   return {
     tick: world.tick,
+    match: { ...world.match, rules: { ...world.match.rules } },
     players,
     projectiles: world.projectiles.map((pr) => ({
       id: pr.id,
@@ -51,6 +53,7 @@ export function captureSnapshot(world: World): WorldSnapshot {
 /** Makes `world` match the snapshot: players come and go, everything else is overwritten. */
 export function applySnapshot(world: World, snap: WorldSnapshot) {
   world.tick = snap.tick;
+  world.match = snap.match;
   const present = new Set(snap.players.map((p) => p.id));
   for (const id of [...world.players.keys()]) if (!present.has(id)) world.removePlayer(id);
   for (const s of snap.players) {
@@ -72,6 +75,7 @@ export function applySnapshot(world: World, snap: WorldSnapshot) {
     p.fireCooldown = s.fireCooldown;
     p.portalCooldown = s.portalCooldown;
     p.portalHeld = s.portalHeld;
+    p.protectedUntil = s.protectedUntil;
   }
   world.projectiles.length = 0;
   for (const s of snap.projectiles) {

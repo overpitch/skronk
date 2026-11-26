@@ -63,6 +63,18 @@ export class Sfx {
           }
           if (e.victim === localId) this.tone("sawtooth", 220, 55, 0.6, 0.35);
           break;
+        case "shielded":
+          if (e.attacker === localId) this.tone("square", 900, 700, 0.05, 0.08); // a dull tick: no damage
+          break;
+        case "matchOver":
+          // Rising for a win, falling otherwise.
+          if (e.winner === localId) [660, 880, 1320].forEach((f, i) => this.tone("triangle", f, f, 0.22, 0.3, i * 0.14));
+          else [440, 370, 294].forEach((f, i) => this.tone("triangle", f, f, 0.26, 0.28, i * 0.18));
+          break;
+        case "matchStart":
+          this.tone("square", 440, 440, 0.12, 0.12);
+          this.tone("square", 880, 880, 0.2, 0.12, 0.15);
+          break;
         case "pickup":
           if (e.player === localId) this.tone("sine", 520, 1250, 0.14, 0.3);
           break;

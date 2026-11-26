@@ -15,6 +15,14 @@ export type SimEvent =
   | { type: "impact"; projectile: number; owner: PlayerId; pos: Vec3; normal: Vec3 }
   /** A projectile hit a player. `damage` is before armor. */
   | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; damage: number; pos: Vec3 }
+  /** A shot hit a player under spawn protection: no damage. */
+  | { type: "shielded"; projectile: number; attacker: PlayerId; victim: PlayerId; pos: Vec3 }
+  /** Someone won (frag limit, or the lead when time ran out). Everything holds still until a rematch. */
+  | { type: "matchOver"; winner: PlayerId }
+  /** Time ran out with the lead tied: the next frag that breaks the tie wins. */
+  | { type: "suddenDeath" }
+  /** A new match began: scores reset, everyone respawned. */
+  | { type: "matchStart" }
   /** attacker is null for deaths with no killer, like falling out of the world. */
   | { type: "kill"; attacker: PlayerId | null; victim: PlayerId }
   | { type: "respawn"; player: PlayerId }

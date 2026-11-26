@@ -8,6 +8,7 @@ import { CollisionWorld, type Tracer } from "./collision";
 import { emptyCommand, type PlayerCommand } from "./command";
 import type { PlayerId, SimEvent } from "./events";
 import { EYE_HEIGHT, PLAYER_MAXS, PLAYER_MINS, playerMove, type MoveState } from "./movement";
+import { decideWinner, FREE_PLAY, newMatch, SPAWN_PROTECTION_TICKS, SPAWN_RAISE_TICKS, type MatchRules, type MatchState } from "./match";
 import { applyPickup, createPickups, PICKUP_HALF_SIZE, type PickupState } from "./pickups";
 import {
   buildPassage,
@@ -46,6 +47,10 @@ const MAX_SHOT_HOPS_PER_TICK = 256;
 /** How far past the level's bounds a shot may go before it's treated as lost. */
 const OUTSIDE_LEVEL_MARGIN = 256;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
+/** A spawn an enemy can see counts as this much closer to them. */
+const SEEN_SPAWN_FACTOR = 0.25;
+/** Spawns scoring at least this share of the best one are all fair picks (so the choice isn't predictable). */
+const GOOD_SPAWN_SHARE = 0.6;
 
 export interface PlayerState extends MoveState {
   id: PlayerId;
@@ -68,6 +73,8 @@ export interface PlayerState extends MoveState {
   portalCooldown: number;
   /** Portal trigger state last tick: a shot needs a fresh press. */
   portalHeld: boolean;
+  /** Spawn protection: shots don't hurt until this tick (firing ends it early). */
+  protectedUntil: number;
 }
 
 export class World {
@@ -80,15 +87,45 @@ export class World {
   /** What happened during the last step(). Replaced every tick. */
   events: SimEvent[] = [];
   tick = 0;
+  /** The match being played: its rules, whether it's over, who won. */
+  match: MatchState;
+  /** Rules for a rematch asked for with rematch(); it starts on the next step. */
+  private pendingRematch: MatchRules | null = null;
   private spawnCursor = 0;
   private nextProjectileId = 1;
   private nextPortalId = 1;
   /** Collision changes for walking through each portal, by portal id. */
   private passages = new Map<number, PortalPassage>();
 
-  constructor(readonly level: LevelData) {
+  constructor(readonly level: LevelData, rules: MatchRules = FREE_PLAY) {
     this.collision = new CollisionWorld(level.brushes);
     this.pickups = createPickups(level.pickups);
+    this.match = newMatch(rules, 0);
+  }
+
+  /**
+   * A fresh match on the next step (same rules unless given): scores to zero,
+   * shots and portals gone, pickups back, everyone respawned.
+   */
+  rematch(rules: MatchRules = this.match.rules) {
+    this.pendingRematch = { ...rules };
+  }
+
+  private startMatch(rules: MatchRules) {
+    this.projectiles.length = 0;
+    this.removePortals(() => true);
+    for (const pk of this.pickups) pk.availableAtTick = 0;
+    this.match = newMatch(rules, this.tick);
+    // Spawn one by one in id order, so each picks a spot away from those already in.
+    const everyone = [...this.players.values()].sort((a, b) => a.id - b.id);
+    for (const p of everyone) p.alive = false;
+    for (const p of everyone) {
+      p.frags = 0;
+      p.deaths = 0;
+      p.portalCooldown = 0;
+      this.respawn(p);
+    }
+    this.events.push({ type: "matchStart" });
   }
 
   addPlayer(id: PlayerId, team = 0): PlayerState {
@@ -112,6 +149,7 @@ export class World {
       deaths: 0,
       portalCooldown: 0,
       portalHeld: false,
+      protectedUntil: 0,
     };
     this.players.set(id, p);
     this.respawn(p);
@@ -174,7 +212,9 @@ export class World {
     p.health = VITALS.startHealth;
     p.armor = 0;
     p.ammo = WEAPON.startAmmo;
-    p.fireCooldown = 0;
+    // The gun comes up a moment after spawning, so a click held from before (asking for a rematch, say) doesn't fire.
+    p.fireCooldown = SPAWN_RAISE_TICKS;
+    p.protectedUntil = this.tick + SPAWN_PROTECTION_TICKS;
     this.events.push({ type: "respawn", player: p.id });
   }
 
@@ -183,6 +223,18 @@ export class World {
     this.events = [];
     const killZ = this.level.mins.z - KILL_Z_MARGIN;
     for (const p of this.players.values()) copy(p.prevOrigin, p.origin);
+    if (this.pendingRematch) {
+      this.startMatch(this.pendingRematch);
+      this.pendingRematch = null;
+      // This tick's commands were decided before the restart (aiming at where people were): skip them.
+      this.tick++;
+      return;
+    }
+    // Match over: everything holds still on the end screen until a rematch.
+    if (this.match.phase === "over") {
+      this.tick++;
+      return;
+    }
 
     for (const p of this.players.values()) {
       if (!p.alive) {
@@ -202,6 +254,23 @@ export class World {
     this.stepProjectiles();
     this.collectPickups();
     this.tick++;
+    this.checkMatch();
+  }
+
+  /** Ends the match if someone has won (or marks sudden death when time is up with the lead tied). */
+  private checkMatch() {
+    const m = this.match;
+    if (m.phase !== "playing" || (m.rules.fragLimit <= 0 && m.rules.timeLimitTicks <= 0)) return;
+    const scores = [...this.players.values()].map((p) => ({ id: p.id, frags: p.frags }));
+    const { winner, suddenDeath } = decideWinner(m, this.tick, scores);
+    if (suddenDeath && !m.suddenDeath) this.events.push({ type: "suddenDeath" });
+    m.suddenDeath = suddenDeath;
+    if (winner === null) return;
+    m.phase = "over";
+    m.winner = winner;
+    m.endTick = this.tick;
+    m.suddenDeath = false;
+    this.events.push({ type: "matchOver", winner });
   }
 
   /**
@@ -233,6 +302,7 @@ export class World {
     }
     p.ammo--;
     p.fireCooldown = WEAPON.fireIntervalTicks;
+    p.protectedUntil = 0; // shooting gives up spawn protection
     const eye = vec3(p.origin.x, p.origin.y, p.origin.z + EYE_HEIGHT);
     const dir = viewDirection(p.yaw, p.pitch, vec3());
     const projectile: Projectile = {
@@ -478,7 +548,8 @@ export class World {
         done = true;
         if (victim) {
           const pos = vec3(pr.origin.x + delta.x * hitT, pr.origin.y + delta.y * hitT, pr.origin.z + delta.z * hitT);
-          this.damage(victim, pr.owner, WEAPON.damage, pos, pr);
+          if (this.tick < victim.protectedUntil) this.events.push({ type: "shielded", projectile: pr.id, attacker: pr.owner, victim: victim.id, pos });
+          else this.damage(victim, pr.owner, WEAPON.damage, pos, pr);
           gone = true;
         } else if (wallT < 1) {
           this.events.push({ type: "impact", projectile: pr.id, owner: pr.owner, pos: clone(tr.endPos), normal: clone(tr.normal) });
@@ -536,7 +607,11 @@ export class World {
     });
   }
 
-  /** Away from other live players when there are any; otherwise round robin. */
+  /**
+   * A fair spawn: not on top of anyone, out of enemies' sight if possible, and far
+   * from the nearest enemy. Picks at random among the good ones, so where you'll
+   * come back isn't predictable. With no enemies about, round robin.
+   */
   private pickSpawn(p: PlayerState): SpawnPoint {
     const all = this.level.spawns;
     const candidates = all.filter((s) => s.team === 0 || s.team === p.team);
@@ -547,26 +622,49 @@ export class World {
       return { origin: centre, yaw: 0, team: 0 };
     }
     const others = [...this.players.values()].filter((o) => o !== p && o.alive);
-    if (others.length === 0) {
-      const spawn = list[this.spawnCursor % list.length];
+    const enemies = others.filter((o) => p.team === 0 || o.team !== p.team);
+    const free = list.filter((s) => !others.some((o) => boxesOverlap(o.origin, s.origin)));
+    const open = free.length ? free : list;
+    if (enemies.length === 0) {
+      const spawn = open[this.spawnCursor % open.length];
       this.spawnCursor++;
       return spawn;
     }
-    let best = list[0];
-    let bestDist = -1;
-    for (const s of list) {
-      let nearest = Infinity;
-      for (const o of others) {
+    const scores = open.map((s) => {
+      let score = Infinity;
+      for (const o of enemies) {
         const d = Math.hypot(o.origin.x - s.origin.x, o.origin.y - s.origin.y, o.origin.z - s.origin.z);
-        nearest = Math.min(nearest, d);
+        score = Math.min(score, this.canSeeSpot(o.origin, s.origin) ? d * SEEN_SPAWN_FACTOR : d);
       }
-      if (nearest > bestDist) {
-        bestDist = nearest;
-        best = s;
-      }
-    }
-    return best;
+      return score;
+    });
+    const best = Math.max(...scores);
+    const good = open.filter((_, i) => scores[i] >= best * GOOD_SPAWN_SHARE);
+    // The same choice for the same game (a hash, not Math.random), so tests and replays agree.
+    return good[hash3(this.tick, p.id, this.spawnCursor++) % good.length];
   }
+
+  /** A clear line from eye height at `from` to eye height at `to` (portals aside). */
+  private canSeeSpot(from: Vec3, to: Vec3): boolean {
+    const a = vec3(from.x, from.y, from.z + EYE_HEIGHT);
+    const b = vec3(to.x, to.y, to.z + EYE_HEIGHT);
+    return this.collision.traceBox(a, b, POINT, POINT).fraction >= 1;
+  }
+}
+
+function boxesOverlap(a: Vec3, b: Vec3): boolean {
+  const w = PLAYER_MAXS.x - PLAYER_MINS.x;
+  const d = PLAYER_MAXS.y - PLAYER_MINS.y;
+  const h = PLAYER_MAXS.z - PLAYER_MINS.z;
+  return Math.abs(a.x - b.x) < w && Math.abs(a.y - b.y) < d && Math.abs(a.z - b.z) < h;
+}
+
+/** A small integer hash, unsigned (the same in every JS engine). */
+function hash3(a: number, b: number, c: number): number {
+  let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b);
+  h = Math.imul(h ^ b ^ (h >>> 13), 0xc2b2ae35);
+  h = Math.imul(h ^ c ^ (h >>> 16), 0x27d4eb2f);
+  return (h ^ (h >>> 15)) >>> 0;
 }
 
 function touchesPickup(origin: Vec3, pickup: Vec3): boolean {

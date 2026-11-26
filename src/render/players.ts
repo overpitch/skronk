@@ -52,6 +52,8 @@ export interface BodyState {
   vy: number;
   onGround: boolean;
   alive: boolean;
+  /** Spawn protection: the body shimmers. */
+  shielded: boolean;
 }
 
 interface Body {
@@ -78,6 +80,8 @@ interface Body {
   recoil: number;
   /** Seconds since fragged, or -1 while alive. */
   deadFor: number;
+  /** Clock for the spawn protection shimmer. */
+  shimmer: number;
 }
 
 const Z = new THREE.Vector3(0, 0, 1);
@@ -144,7 +148,9 @@ export class PlayerModels {
     b.root.position.set(s.x, s.y, s.z);
     b.root.rotation.z = s.yaw;
     b.flash = Math.max(0, b.flash - dt);
-    b.bodyMat.emissiveIntensity = (b.flash / HIT_FLASH_SECONDS) * 0.8;
+    b.shimmer += dt;
+    const glow = s.shielded && s.alive ? 0.3 + 0.2 * Math.sin(b.shimmer * 14) : 0;
+    b.bodyMat.emissiveIntensity = Math.max(glow, (b.flash / HIT_FLASH_SECONDS) * 0.8);
 
     // Fragged: topple backwards and lie there until the respawn.
     if (!s.alive) {
@@ -310,7 +316,7 @@ export class PlayerModels {
       aim,
       gun,
       bodyMat,
-      state: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, onGround: true, alive: true },
+      state: { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, onGround: true, alive: true, shielded: false },
       flash: 0,
       phase: 0,
       swing: 0,
@@ -318,6 +324,7 @@ export class PlayerModels {
       air: 0,
       recoil: 0,
       deadFor: -1,
+      shimmer: 0,
     };
   }
 

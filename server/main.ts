@@ -12,6 +12,8 @@ import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 import { DIFFICULTIES } from "../src/client/settings";
 import { GAME_PORT } from "../src/net/protocol";
+import { describeRules } from "../src/sim/match";
+import { secondsToTicks } from "../src/sim/tick";
 import { MAX_PLAYERS, startServer } from "./gameServer";
 
 /** --name value on the command line, else the SKRONK_NAME environment variable (how hosts pass settings), else fallback. */
@@ -25,17 +27,21 @@ const map = arg("map", "arena");
 const bots = Math.max(0, Math.min(MAX_PLAYERS - 1, Number(arg("bots", "0")) || 0));
 const difficulty = DIFFICULTIES.find((d) => d.id === arg("difficulty", "normal")) ?? DIFFICULTIES[2];
 // Hosting services say which port to listen on in PORT.
+// Match: --fraglimit N (0 for none) and --timelimit minutes (0 for none).
+const fragLimit = Math.max(0, Math.floor(Number(arg("fraglimit", "20")) || 0));
+const minutes = Math.max(0, Number(arg("timelimit", "10")) || 0);
+const rules = { fragLimit, timeLimitTicks: secondsToTicks(minutes * 60) };
 const port = Number(arg("port", process.env.PORT ?? String(GAME_PORT)));
 const serve = process.argv.includes("--serve");
 const staticDir = serve ? resolve(import.meta.dirname, "../dist") : undefined;
 
-await startServer({ map, bots, skill: difficulty.skill, port, staticDir, log: (line) => console.log(line) });
+await startServer({ map, bots, skill: difficulty.skill, rules, port, staticDir, log: (line) => console.log(line) });
 
 const addresses = Object.values(networkInterfaces())
   .flat()
   .filter((a) => a && a.family === "IPv4" && !a.internal)
   .map((a) => a!.address);
-console.log(`Skronk server: map ${map}, ${bots} bots (${difficulty.label}), port ${port}`);
+console.log(`Skronk server: map ${map}, ${bots} bots (${difficulty.label}), ${describeRules(rules)}, port ${port}`);
 if (serve) {
   for (const a of addresses) console.log(`  play from another device (Xbox too): http://${a}:${port}/`);
   console.log(`  play on this machine:                http://localhost:${port}/`);

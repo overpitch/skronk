@@ -98,6 +98,8 @@ describe("fighting bots", () => {
     const bot = new Bot(2, nav, skill);
     const b = world.addPlayer(2);
     const t = world.addPlayer(3);
+    b.protectedUntil = t.protectedUntil = 0; // no spawn protection in these tests
+    b.fireCooldown = 0;
     set(b.origin, ...botAt);
     set(b.prevOrigin, ...botAt);
     b.yaw = botYaw;
@@ -264,6 +266,8 @@ describe("bots and pickups", () => {
     const bot = new Bot(2, nav);
     const b = world.addPlayer(2);
     const t = world.addPlayer(3);
+    b.protectedUntil = t.protectedUntil = 0; // no spawn protection in these tests
+    b.fireCooldown = 0;
     // Bot in the open near the platform's steps, the target off to the west.
     set(b.origin, 150, -150, FLOOR);
     set(b.prevOrigin, 150, -150, FLOOR);

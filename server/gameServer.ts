@@ -17,6 +17,7 @@ import type { ClientMessage, ServerMessage } from "../src/net/protocol";
 import { captureSnapshot } from "../src/net/snapshot";
 import { emptyCommand, sanitizeCommand, type PlayerCommand } from "../src/sim/command";
 import type { PlayerId } from "../src/sim/events";
+import { AUTO_REMATCH_TICKS, FREE_PLAY, type MatchRules } from "../src/sim/match";
 import { TICK_DT, World } from "../src/sim/world";
 
 export const MAX_PLAYERS = 8;
@@ -39,6 +40,8 @@ export interface ServerOptions {
   bots: number;
   /** Bot skill 0..1. */
   skill: number;
+  /** Frag and time limits; free play if absent. The next match starts by itself after each one ends. */
+  rules?: MatchRules;
   /** 0 picks a free port. */
   port: number;
   /** Logs joins and leaves; silent if absent. */
@@ -71,7 +74,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   const log = options.log ?? (() => {});
   const mapFile = resolve(import.meta.dirname, `../public/assets/maps/${options.map}.map`);
   const level = buildLevel(options.map, parseMap(readFileSync(mapFile, "utf8")));
-  const world = new World(level);
+  const world = new World(level, options.rules ?? FREE_PLAY);
   const names = new Map<PlayerId, string>();
   let nextId = 1;
 
@@ -180,7 +183,13 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
       commands.set(c.id, c.last);
     }
     for (const b of bots) commands.set(b.id, b.command(world));
+    // The end screen shows for a while, then the next match starts.
+    if (world.match.phase === "over" && world.tick - world.match.endTick >= AUTO_REMATCH_TICKS) world.rematch();
     world.step(commands);
+    for (const e of world.events) {
+      if (e.type === "matchOver") log(`match over: ${names.get(e.winner) ?? `player ${e.winner}`} won`);
+      if (e.type === "matchStart") log("new match");
+    }
     if (clients.size > 0) broadcast({ t: "snap", snap: captureSnapshot(world), acks: [...clients].map((c) => [c.id, c.ack]) });
   };
 

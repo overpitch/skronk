@@ -7,6 +7,7 @@
  */
 import type { PlayerCommand } from "../sim/command";
 import type { PlayerId, SimEvent } from "../sim/events";
+import type { MatchState } from "../sim/match";
 import type { Portal } from "../sim/portals";
 
 /** The game server's port; browsers on the same network join ws://<host>:GAME_PORT. */
@@ -33,6 +34,7 @@ export interface PlayerSnap {
   fireCooldown: number;
   portalCooldown: number;
   portalHeld: boolean;
+  protectedUntil: number;
 }
 
 export interface ProjectileSnap {
@@ -47,6 +49,8 @@ export interface ProjectileSnap {
 /** Everything a client needs to draw one tick of the world. */
 export interface WorldSnapshot {
   tick: number;
+  /** The match: rules, playing or over, the winner. */
+  match: MatchState;
   players: PlayerSnap[];
   projectiles: ProjectileSnap[];
   portals: Portal[];

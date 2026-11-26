@@ -14,13 +14,20 @@
     <div id="debug"></div>
     <div id="centre-msg"></div>
     <div id="pickup-msg"></div>
+    <div id="match-clock" class="hidden"></div>
+    <div id="protected-msg" class="hidden">Spawn protection</div>
     <div id="scoreboard" class="hidden">
+      <div id="match-end" class="hidden">
+        <h2 id="match-winner"></h2>
+        <p id="match-rules"></p>
+      </div>
       <table>
         <thead>
           <tr><th>Player</th><th>Frags</th><th>Deaths</th></tr>
         </thead>
         <tbody></tbody>
       </table>
+      <p id="match-next" class="hidden"></p>
     </div>
     <div id="hud" class="hidden">
       <div class="vitals">
@@ -40,10 +47,11 @@
         <button id="map-choice" class="setting" type="button">Map</button>
         <button id="bot-count" class="setting" type="button">Bots: 0</button>
         <button id="difficulty" class="setting" type="button">Difficulty: Normal</button>
+        <button id="match-choice" class="setting" type="button">Match: First to 20 or 10 min</button>
         <button id="invert-look" class="setting" type="button" aria-pressed="false">Invert look: Off</button>
         <button id="graphics" class="setting" type="button">Graphics: Auto</button>
       </div>
-      <p class="keys">Click to change &middot; controller: D-pad up network &middot; D-pad down graphics &middot; D-pad left / right map &middot; LB / RB bots &middot; X difficulty &middot; Y invert look &middot; hold Tab or View for scores</p>
+      <p class="keys">Click to change &middot; controller: D-pad up network &middot; D-pad down graphics &middot; D-pad left / right map &middot; LB / RB bots &middot; X difficulty &middot; B match &middot; Y invert look &middot; hold Tab or View for scores</p>
       <label class="setting slider" for="player-name">
         Name
         <input id="player-name" type="text" maxlength="20" placeholder="Player" autocomplete="off" spellcheck="false" />

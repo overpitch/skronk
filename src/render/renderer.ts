@@ -234,6 +234,7 @@ export class GameRenderer {
         vy: p.velocity.y,
         onGround: p.onGround,
         alive: p.alive,
+        shielded: world.tick < p.protectedUntil,
       });
     }
     this.players.update(dt);
@@ -358,6 +359,10 @@ export class GameRenderer {
             new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z),
             new THREE.Vector3(e.normal.x, e.normal.y, e.normal.z),
           );
+          break;
+        case "shielded":
+          // Spawn protection soaked it up: sparks, no flinch.
+          if (e.victim !== localId) this.effects.playerImpact(new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z), this.v2.copy(this.forward));
           break;
         case "hit":
           this.players.hit(e.victim);

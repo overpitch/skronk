@@ -256,7 +256,8 @@ export class Bot {
     let bestHeight = CHEST;
     let currentHeight: number | null = null;
     for (const p of world.players.values()) {
-      if (p === me || !p.alive || (me.team !== 0 && p.team === me.team)) continue;
+      // Someone under spawn protection isn't worth a shot yet.
+      if (p === me || !p.alive || (me.team !== 0 && p.team === me.team) || world.tick < p.protectedUntil) continue;
       const h = this.canSee(world, me, p);
       if (h === null) continue;
       if (p.id === this.target) currentHeight = h;

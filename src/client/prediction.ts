@@ -66,7 +66,8 @@ export class Predictor {
    */
   tick(world: World, server: PlayerState, ack: number | null): PredictedTick {
     if (ack !== null) this.pending = this.pending.filter((p) => p.seq > ack);
-    if (!server.alive || this.pending.length === 0) {
+    // Dead, nothing in flight, or the match is over (everyone frozen): show the server's word as it is.
+    if (!server.alive || this.pending.length === 0 || world.match.phase !== "playing") {
       this.state = null;
       set(this.offset, 0, 0, 0);
       return { teleported: false, fired: false };

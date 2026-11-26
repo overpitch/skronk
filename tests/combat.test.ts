@@ -31,6 +31,8 @@ function duel() {
   const world = new World(loadTestMap());
   const a = world.addPlayer(1);
   const b = world.addPlayer(2);
+  a.protectedUntil = b.protectedUntil = 0; // no spawn protection in these tests
+  a.fireCooldown = b.fireCooldown = 0; // gun already up
   // Same row, nothing between them; A looks along +X at B.
   place(a, -300, -300);
   place(b, 0, -300);
@@ -63,6 +65,7 @@ describe("weapon", () => {
   it("stops at walls and reports the impact", () => {
     const world = new World(loadTestMap());
     const a = world.addPlayer(1);
+    a.fireCooldown = 0;
     place(a, 0, 0);
     const events = [...run(world, 1, { 1: aim(0) }), ...run(world, 30)];
     const impact = events.find((e) => e.type === "impact");

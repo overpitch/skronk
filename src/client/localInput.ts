@@ -12,6 +12,7 @@ const PITCH_LIMIT = (89 * Math.PI) / 180;
 
 // Standard Gamepad mapping indices.
 const PAD_A = 0;
+const PAD_B = 1;
 const PAD_X = 2;
 const PAD_Y = 3;
 const PAD_LB = 4;
@@ -57,6 +58,8 @@ export class LocalInput {
   onToggleNetwork: () => void = () => {};
   /** Gamepad D-pad down while the menu is open: next graphics setting. */
   onCycleGraphics: () => void = () => {};
+  /** Gamepad B while the menu is open: next match rules. */
+  onCycleMatch: () => void = () => {};
 
   private keys = new Set<string>();
   /**
@@ -144,7 +147,7 @@ export class LocalInput {
     const pressed = (i: number) => !!pad.buttons[i]?.pressed;
     const justPressed = (i: number) => pressed(i) && !this.padPrev[i];
     // Menu buttons change settings; any other button starts play.
-    const menuButtons = [PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT, PAD_UP, PAD_DOWN, PAD_VIEW];
+    const menuButtons = [PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT, PAD_UP, PAD_DOWN, PAD_VIEW];
     const otherJustPressed = () => pad.buttons.some((_, i) => !menuButtons.includes(i) && justPressed(i));
     if (menuOpen) {
       if (justPressed(PAD_Y)) this.onToggleInvertLook();
@@ -155,6 +158,7 @@ export class LocalInput {
       else if (justPressed(PAD_RIGHT)) this.onChangeMap(1);
       else if (justPressed(PAD_UP)) this.onToggleNetwork();
       else if (justPressed(PAD_DOWN)) this.onCycleGraphics();
+      else if (justPressed(PAD_B)) this.onCycleMatch();
       else if (otherJustPressed()) this.onActivate();
     } else if (justPressed(PAD_MENU)) {
       this.onDeactivate();
