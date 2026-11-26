@@ -47,19 +47,46 @@ export interface BotSkill {
   lead: number;
   /** Half the field of view it notices enemies in, radians. */
   fovHalf: number;
+  /** Share of the time it has the trigger down in a fight (the rest it's re-aiming); 1 never lets up. */
+  fireShare: number;
+  /** Ticks it holds a slow, heavy shot (shotgun, rockets, railgun) on target before taking it. */
+  settleTicks: number;
+  /** Aim wander with the railgun, times the usual: a long precise shot is harder. */
+  railAimScale: number;
+  /** Fires rockets at your feet (the splash is hard to dodge), not at your body. */
+  feetRockets: boolean;
+  /** How often it reconsiders its weapon, and how much better another must be to switch. */
+  weaponRethinkTicks: number;
+  switchMargin: number;
 }
 
 export const DEFAULT_BOT_SKILL = 0.5;
+/** How long one trigger cycle is (fire, then re-aim), ticks. */
+const FIRE_CYCLE_TICKS = 60;
+/** Weapons this slow to fire again (shotgun, rockets, railgun) make each shot count: bots line them up first. */
+const SLOW_SHOT_TICKS = 30;
 
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 
-/** 0 is a beginner, 1 is sharp. */
+/**
+ * 0 is a beginner, 1 is sharp. Measured against a target strafing at two thirds
+ * of run speed: a Beginner deals about a third of a Hard bot's damage, Easy
+ * about half, Normal about two thirds.
+ */
 export function botSkill(level: number): BotSkill {
   const s = Math.max(0, Math.min(1, level));
+  // Most of the gain comes towards the top: the low levels are clearly gentler.
+  const k = s ** 1.3;
   return {
-    reactionTicks: Math.round(mix(0.6, 0.15, s) * TICK_RATE),
-    turnRate: mix(3.5, 12, s),
-    aimError: mix(0.1, 0.015, s),
+    reactionTicks: Math.round(mix(0.9, 0.15, s) * TICK_RATE),
+    turnRate: mix(3, 12, s),
+    aimError: mix(0.17, 0.015, k),
+    fireShare: mix(0.45, 1, k),
+    settleTicks: Math.round(mix(32, 4, s)),
+    railAimScale: mix(1.6, 1, s),
+    feetRockets: s >= 0.7,
+    weaponRethinkTicks: Math.round(mix(90, 15, s)),
+    switchMargin: mix(0.45, 0.15, s),
     lead: mix(0.2, 0.9, s),
     fovHalf: (mix(55, 80, s) * Math.PI) / 180,
   };
@@ -69,8 +96,6 @@ export function botSkill(level: number): BotSkill {
 const MEMORY_TICKS = 5 * TICK_RATE;
 /** With only fists, it takes on someone this close and goes for ammo otherwise. */
 const BRAWL_DISTANCE = 300;
-/** How often it reconsiders its weapon. */
-const WEAPON_RETHINK_TICKS = 15;
 /** Distance it readies a weapon for when there's no one to fight. */
 const ROAM_DISTANCE = 500;
 /** How often it thinks about placing portals of its own. */
@@ -124,6 +149,8 @@ export class Bot {
   /** Weapon it wants in hand (index), reconsidered every WEAPON_RETHINK_TICKS. */
   private wantWeapon = -1;
   private weaponTick = 0;
+  /** Ticks its aim has been on the target. */
+  private linedUp = 0;
   /** Placing a pair of its own portals to get somewhere (null when not). */
   private job: PortalJob | null = null;
   private portalThinkTick = 0;
@@ -193,7 +220,7 @@ export class Bot {
       // Fight: aim where it will be (partly), plus wander. Rockets go at the feet of someone on the ground.
       const dx = target.origin.x - eye.x;
       const dy = target.origin.y - eye.y;
-      const feet = spec.splash !== null && target.onGround && range > 200;
+      const feet = this.skill.feetRockets && spec.splash !== null && target.onGround && range > 200;
       const aimHeight = feet ? PLAYER_MINS.z + 4 : this.aimHeight;
       const flight = spec.shot === "projectile" ? Math.hypot(dx, dy, target.origin.z + aimHeight - eye.z) / spec.speed : 0;
       const lead = flight * this.skill.lead;
@@ -201,8 +228,9 @@ export class Bot {
       const ay = target.origin.y + target.velocity.y * lead - eye.y;
       const az = target.origin.z + aimHeight + (feet ? 0 : target.velocity.z * lead * 0.5) - eye.z;
       this.wander(world);
-      lookYaw = Math.atan2(ay, ax) + this.errYaw;
-      lookPitch = Math.atan2(az, Math.hypot(ax, ay)) + this.errPitch;
+      const err = spec.id === "railgun" ? this.skill.railAimScale : 1;
+      lookYaw = Math.atan2(ay, ax) + this.errYaw * err;
+      lookPitch = Math.atan2(az, Math.hypot(ax, ay)) + this.errPitch * err;
       // Start turning after half the reaction time, shoot after all of it.
       const since = world.tick - this.spottedTick;
       if (since < this.skill.reactionTicks / 2) {
@@ -219,10 +247,13 @@ export class Bot {
       this.turn(lookYaw, lookPitch);
       const dist = Math.hypot(ax, ay, az);
       const onTarget = Math.atan2(PLAYER_MAXS.x, dist);
-      cmd.fire =
-        since >= this.skill.reactionTicks &&
-        Math.abs(wrap(lookYaw - this.yaw)) < onTarget &&
-        Math.abs(lookPitch - this.pitch) < onTarget * 1.5;
+      const lined = Math.abs(wrap(lookYaw - this.yaw)) < onTarget && Math.abs(lookPitch - this.pitch) < onTarget * 1.5;
+      // Counted once the gun is ready again: steadying a heavy shot adds to the wait between shots.
+      this.linedUp = lined && me.fireCooldown === 0 ? this.linedUp + 1 : 0;
+      // Not every moment: lower skill lets go of the trigger to re-aim. A slow, heavy shot is held a moment first.
+      const triggerOn = (world.tick + this.id * 17) % FIRE_CYCLE_TICKS < FIRE_CYCLE_TICKS * this.skill.fireShare;
+      const settled = spec.fireTicks < SLOW_SHOT_TICKS || this.linedUp >= this.skill.settleTicks;
+      cmd.fire = since >= this.skill.reactionTicks && lined && triggerOn && settled;
     } else if (this.job) {
       // Placing portals: walk to each spot, stop, aim, fire; then on through them.
       const t = this.job.tick(world, me, this.nav, this.graph, { yaw: this.yaw, pitch: this.pitch });
@@ -277,8 +308,8 @@ export class Bot {
   /** Picks the weapon for a fight at this distance (every so often, so it doesn't dither). */
   private readyWeapon(world: World, me: PlayerState, distance: number) {
     if (world.tick < this.weaponTick && this.wantWeapon >= 0) return;
-    this.weaponTick = world.tick + WEAPON_RETHINK_TICKS;
-    this.wantWeapon = chooseWeapon(me, distance);
+    this.weaponTick = world.tick + this.skill.weaponRethinkTicks;
+    this.wantWeapon = chooseWeapon(me, distance, this.skill.switchMargin);
   }
 
   /**

@@ -32,9 +32,9 @@ export function suitability(w: number, distance: number): number {
 }
 
 /** The weapon to hold for a fight at `distance`: the best that has ammo, keeping the current one unless another is clearly better. */
-export function chooseWeapon(me: Pick<Armed, "weapon" | "weapons" | "ammo">, distance: number): number {
+export function chooseWeapon(me: Pick<Armed, "weapon" | "weapons" | "ammo">, distance: number, margin = SWITCH_MARGIN): number {
   let best = canFire(me, me.weapon) ? me.weapon : FISTS;
-  let bestScore = suitability(best, distance) + (best === me.weapon ? SWITCH_MARGIN : 0);
+  let bestScore = suitability(best, distance) + (best === me.weapon ? margin : 0);
   for (let w = 0; w < WEAPONS.length; w++) {
     if (w === best || !canFire(me, w)) continue;
     const score = suitability(w, distance);
