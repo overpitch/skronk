@@ -11,6 +11,7 @@ import type { World } from "../sim/world";
 import { Effects } from "./effects";
 import { PlayerModels } from "./players";
 import { PORTAL_ONLY_LAYER, PortalViews } from "./portals";
+import type { QualityProfile } from "./quality";
 import { playerPortalOwner, type PortalOwner, type PortalSlot } from "../sim/portals";
 import { FIZZLE_COLOR, portalColor } from "./portalColors";
 import { TextureLibrary } from "./textures";
@@ -22,6 +23,10 @@ const SPEED_FOV_KICK_DEG = 10;
 /** How long a local shot's tracer takes to slide from the gun muzzle onto its true path. */
 const TRACER_CONVERGE_SECONDS = 0.09;
 const PUNCH_RECOVERY = 12; // per second
+/** Light strengths: sky/ground fill everywhere, the shadowless sun for face contrast, each map light entity. */
+const FILL_LIGHT = 1.6;
+const SUN_LIGHT = 0.8;
+const MAP_LIGHT = 4;
 
 export interface RenderFrame {
   world: World;
@@ -68,18 +73,29 @@ export class GameRenderer {
   constructor(
     private canvas: HTMLCanvasElement,
     textureRoot: string,
+    readonly quality: QualityProfile,
   ) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality.antialias, powerPreference: "high-performance" });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.maxPixelRatio));
+    if (quality.shadows) {
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      // Shadows are worked out once a frame (in render), not again for every portal view.
+      this.renderer.shadowMap.autoUpdate = false;
+    }
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.autoClear = false;
     this.camera = new THREE.PerspectiveCamera(90, 1, 2, 16384);
     this.camera.up.set(0, 0, 1);
     this.scene.background = new THREE.Color(0x0b0d12);
-    this.textures = new TextureLibrary(textureRoot, this.renderer.capabilities.getMaxAnisotropy());
+    this.textures = new TextureLibrary(textureRoot, Math.min(quality.anisotropy, this.renderer.capabilities.getMaxAnisotropy()));
     this.effects = new Effects(this.scene);
-    this.players = new PlayerModels(this.scene);
-    this.portals = new PortalViews(this.scene);
+    this.players = new PlayerModels(this.scene, quality.shadows);
+    this.portals = new PortalViews(this.scene, {
+      maxViews: quality.maxPortalViews,
+      scale: quality.portalViewScale,
+      samples: quality.portalSamples,
+    });
     this.resize();
   }
 
@@ -109,22 +125,34 @@ export class GameRenderer {
       const mat = new THREE.MeshLambertMaterial({ map: this.textures.get(texture) });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.name = texture;
+      mesh.castShadow = mesh.receiveShadow = this.quality.shadows;
       this.scene.add(mesh);
     }
 
     // Simple lighting until there's a lightmap pass: sky/ground fill, one sun
-    // for face contrast, and a few map lights. Point lights are capped because
-    // each one costs every pixel, and the Xbox browser is the weakest target.
-    this.scene.add(new THREE.HemisphereLight(0xd8e0ff, 0x6a5e50, 3.2));
-    const sun = new THREE.DirectionalLight(0xfff4e0, 1.4);
-    sun.position.set(0.4, 0.7, 1);
-    this.scene.add(sun);
-    for (const l of level.lights.slice(0, 4)) {
+    // for face contrast, and a few map lights. Point lights are capped (by the
+    // quality mode) because each one costs every pixel.
+    // The map's lights carry real weight against the fill, so their shadows (Full) read clearly;
+    // the same balance in both modes, so a map lit in one looks lit the same in the other.
+    this.scene.add(new THREE.HemisphereLight(0xd8e0ff, 0x6a5e50, FILL_LIGHT));
+    const sun = new THREE.DirectionalLight(0xfff4e0, SUN_LIGHT);
+    this.placeSun(sun, level);
+    this.scene.add(sun, sun.target);
+    level.lights.slice(0, this.quality.maxLights).forEach((l, i) => {
       // Quake-style light radius: full strength near, fading to zero at the cutoff.
-      const light = new THREE.PointLight(new THREE.Color(l.color[0], l.color[1], l.color[2]), 1.5, l.intensity * 1.5, 0);
+      const light = new THREE.PointLight(new THREE.Color(l.color[0], l.color[1], l.color[2]), MAP_LIGHT, l.intensity * 1.5, 0);
       light.position.set(l.origin.x, l.origin.y, l.origin.z);
+      // Full quality: the first few lights cast shadows (indoors, the map's own lights are the ones that should).
+      if (i < this.quality.shadowLights) {
+        light.castShadow = true;
+        light.shadow.mapSize.set(this.quality.shadowMapSize, this.quality.shadowMapSize);
+        light.shadow.camera.near = 4;
+        light.shadow.camera.far = l.intensity * 1.5;
+        light.shadow.bias = -0.002;
+        light.shadow.normalBias = 1;
+      }
       this.scene.add(light);
-    }
+    });
 
     // Pickup markers: placeholder shapes so map authors can see where they are.
     const colors: Record<string, number> = { health: 0xff5050, armor: 0x50a0ff, ammo: 0xffc800 };
@@ -138,6 +166,17 @@ export class GameRenderer {
       this.scene.add(mesh);
       this.pickupMeshes.push(mesh);
     }
+  }
+
+  /** The sun: shadowless fill from up and to one side, for contrast between faces. */
+  private placeSun(sun: THREE.DirectionalLight, level: LevelData) {
+    const centre = new THREE.Vector3(
+      (level.mins.x + level.maxs.x) / 2,
+      (level.mins.y + level.maxs.y) / 2,
+      (level.mins.z + level.maxs.z) / 2,
+    );
+    sun.position.copy(centre).add(new THREE.Vector3(0.4, 0.7, 1));
+    sun.target.position.copy(centre);
   }
 
   resize() {
@@ -231,6 +270,7 @@ export class GameRenderer {
     }
     this.viewModel.update(dt, speed, !!me?.onGround, !!me?.alive);
 
+    if (this.quality.shadows) this.renderer.shadowMap.needsUpdate = true;
     this.portals.renderViews(this.renderer, this.camera, world.portals, (p) => world.linkedPortal(p));
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);

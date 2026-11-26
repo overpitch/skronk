@@ -21,7 +21,11 @@ export class PlayerModels {
   private visorGeo = new THREE.BoxGeometry(6, 22, 7);
   private visorMat = new THREE.MeshBasicMaterial({ color: 0x7fe8ff });
 
-  constructor(private scene: THREE.Scene) {
+  constructor(
+    private scene: THREE.Scene,
+    /** Bodies cast shadows (Full quality). */
+    private castShadows = false,
+  ) {
     const w = PLAYER_MAXS.x - PLAYER_MINS.x - 2;
     const h = PLAYER_MAXS.z - PLAYER_MINS.z - 2;
     this.bodyGeo = new THREE.BoxGeometry(w, w, h);
@@ -46,6 +50,7 @@ export class PlayerModels {
       const visor = new THREE.Mesh(this.visorGeo, this.visorMat);
       visor.position.set(PLAYER_MAXS.x - 1, 0, EYE_HEIGHT);
       group.add(visor);
+      if (this.castShadows) group.traverse((o) => (o.castShadow = true));
       this.scene.add(group);
       this.bodies.set(id, { group, bodyMat, flash: 0 });
     }

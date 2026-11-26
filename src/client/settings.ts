@@ -2,6 +2,8 @@
  * Player preferences, saved per browser. Storage can be missing or blocked
  * (private windows, Xbox Edge quirks), so every access falls back to defaults.
  */
+import type { QualitySetting } from "../render/quality";
+
 export type Difficulty = "beginner" | "easy" | "normal" | "hard";
 
 /** Menu order, with the bot skill (0..1) each one means. */
@@ -29,6 +31,8 @@ export interface Settings {
   map: string;
   /** Your name in network games; empty lets the server call you "Player N". */
   name: string;
+  /** Graphics: Full, Light, or Auto (picked for this device). */
+  quality: QualitySetting;
 }
 
 export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
@@ -36,7 +40,7 @@ export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
 const STORAGE_KEY = "skronk.settings";
 
 export function defaultSettings(): Settings {
-  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box", name: "" };
+  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box", name: "", quality: "auto" };
 }
 
 export const difficultyOf = (id: Difficulty) => DIFFICULTIES.find((d) => d.id === id) ?? DIFFICULTIES[2];
@@ -55,6 +59,7 @@ export function loadSettings(): Settings {
     if (typeof saved.volume === "number" && saved.volume >= 0 && saved.volume <= 1) settings.volume = saved.volume;
     if (typeof saved.map === "string" && /^[\w-]+$/.test(saved.map)) settings.map = saved.map;
     if (typeof saved.name === "string") settings.name = cleanName(saved.name);
+    if (["auto", "full", "light"].includes(saved.quality)) settings.quality = saved.quality;
   } catch {
     // Unreadable storage: keep defaults.
   }

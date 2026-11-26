@@ -6,7 +6,7 @@
  *
  * One level only: portals seen inside a portal view show their swirl, not
  * another view. Each view is a full extra scene render (scissored to the
- * opening), so MAX_VIEWS caps the cost on weak hardware like the Xbox.
+ * opening), so the quality profile caps how many and how sharp.
  */
 import * as THREE from "three";
 import { PORTAL, type Portal } from "../sim/portals";
@@ -16,10 +16,15 @@ const OPEN_SECONDS = 0.18;
 /** Draw just off the wall so it never fights the wall for depth. */
 const SURFACE_LIFT = 0.6;
 const ALONE_OPACITY = 0.28;
-/** Most portal views rendered per frame, nearest first. Others fall back to the swirl. */
-const MAX_VIEWS = 4;
-/** Render target size as a fraction of the screen's. Lower it if the Xbox struggles. */
-const VIEW_SCALE = 1;
+/** How many portal views to draw, how sharp: from the quality profile. */
+export interface PortalViewOptions {
+  /** Most views rendered per frame, nearest first. Others fall back to the swirl. */
+  maxViews: number;
+  /** Render target size as a fraction of the screen's. */
+  scale: number;
+  /** Multisampling inside the views (0 for none). */
+  samples: number;
+}
 /**
  * The cup: the view continues this far behind the surface, so when your camera's
  * near plane slices through the portal (and the wall) as you step in, you still
@@ -151,7 +156,10 @@ export class PortalViews {
   private v = new THREE.Vector3();
   private clip = new THREE.Plane();
 
-  constructor(private scene: THREE.Scene) {
+  constructor(
+    private scene: THREE.Scene,
+    private options: PortalViewOptions,
+  ) {
     this.blank.needsUpdate = true;
     this.virtual.matrixAutoUpdate = false;
     this.virtual.layers.enable(PORTAL_ONLY_LAYER);
@@ -194,8 +202,8 @@ export class PortalViews {
     camera.updateMatrixWorld();
     this.frustum.setFromProjectionMatrix(this.m1.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     gl.getDrawingBufferSize(this.size);
-    const w = Math.max(1, Math.round(this.size.x * VIEW_SCALE));
-    const h = Math.max(1, Math.round(this.size.y * VIEW_SCALE));
+    const w = Math.max(1, Math.round(this.size.x * this.options.scale));
+    const h = Math.max(1, Math.round(this.size.y * this.options.scale));
 
     const passes: Pass[] = [];
     for (const p of portals) {
@@ -215,7 +223,7 @@ export class PortalViews {
       passes.push({ view, from: p, to, distance: camera.position.distanceTo(this.sphere.center) });
     }
     passes.sort((a, b) => a.distance - b.distance);
-    passes.length = Math.min(passes.length, MAX_VIEWS);
+    passes.length = Math.min(passes.length, this.options.maxViews);
     if (passes.length === 0) return;
 
     // Inside a view, portals show their swirl; that's what stops the recursion.
@@ -224,7 +232,7 @@ export class PortalViews {
     for (const pass of passes) {
       const { view, from, to } = pass;
       if (!view.target) {
-        view.target = new THREE.WebGLRenderTarget(w, h, { samples: 4 });
+        view.target = new THREE.WebGLRenderTarget(w, h, { samples: this.options.samples });
         view.target.texture.colorSpace = THREE.SRGBColorSpace;
       } else if (view.target.width !== w || view.target.height !== h) {
         view.target.setSize(w, h);

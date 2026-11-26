@@ -89,7 +89,7 @@ What a player can do (1 unit is about an inch):
 2. **Pickups:** `pickup_health`, `pickup_armor` and `pickup_ammo`. Place each one's box just above the floor (origin 17 above the floor top). Their `amount` key sets how much they give.
    - Health and ammo spread out, so nobody can camp them all.
    - Armor somewhere worth the trip: the top of a ramp, the far side of a jump.
-3. **Lights:** two to four. Only the first four lights in a map are used for now; `_color` tints them (`1 0.85 0.6` is warm, `0.6 0.8 1` cool).
+3. **Lights:** two to four. Light graphics mode (the Xbox) uses only the first four lights in a map and Full mode the first eight, so put the important ones first; `_color` tints them (`1 0.85 0.6` is warm, `0.6 0.8 1` cool).
 
 **Check it:** in the game's menu set **Bots** to 3 and play. Bots go for pickups when they need them, so you'll see quickly whether yours are placed well. Open the **Arena** map to see a full layout.
 

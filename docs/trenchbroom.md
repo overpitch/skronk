@@ -62,7 +62,7 @@ Right-click in the 2D or 3D view → Create Point Entity, or drag from the Entit
 | `pickup_ammo` | `amount` (default 50) |
 | `light` | `light` brightness (default 300), `_color` as `R G B` from 0 to 1 |
 
-Put spawns' boxes just above the floor, not inside it (origin 25 above the floor top); pickups' boxes too (origin 17 above). Only the first four lights are used for now.
+Put spawns' boxes just above the floor, not inside it (origin 25 above the floor top); pickups' boxes too (origin 17 above). The first four lights are used in Light graphics mode (Xbox), the first eight in Full: put the important ones first.
 
 The map's title: the worldspawn entity's `message` key (with nothing selected, the Entity inspector shows worldspawn). The game's Map menu shows it.
 

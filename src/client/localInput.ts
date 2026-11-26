@@ -18,6 +18,7 @@ const PAD_LB = 4;
 const PAD_RB = 5;
 const PAD_VIEW = 8;
 const PAD_UP = 12;
+const PAD_DOWN = 13;
 const PAD_LEFT = 14;
 const PAD_RIGHT = 15;
 const PAD_LT = 6;
@@ -54,6 +55,8 @@ export class LocalInput {
   onChangeMap: (delta: number) => void = () => {};
   /** Gamepad D-pad up while the menu is open: join or leave the network game. */
   onToggleNetwork: () => void = () => {};
+  /** Gamepad D-pad down while the menu is open: next graphics setting. */
+  onCycleGraphics: () => void = () => {};
 
   private keys = new Set<string>();
   /**
@@ -141,7 +144,7 @@ export class LocalInput {
     const pressed = (i: number) => !!pad.buttons[i]?.pressed;
     const justPressed = (i: number) => pressed(i) && !this.padPrev[i];
     // Menu buttons change settings; any other button starts play.
-    const menuButtons = [PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT, PAD_UP, PAD_VIEW];
+    const menuButtons = [PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT, PAD_UP, PAD_DOWN, PAD_VIEW];
     const otherJustPressed = () => pad.buttons.some((_, i) => !menuButtons.includes(i) && justPressed(i));
     if (menuOpen) {
       if (justPressed(PAD_Y)) this.onToggleInvertLook();
@@ -151,6 +154,7 @@ export class LocalInput {
       else if (justPressed(PAD_LEFT)) this.onChangeMap(-1);
       else if (justPressed(PAD_RIGHT)) this.onChangeMap(1);
       else if (justPressed(PAD_UP)) this.onToggleNetwork();
+      else if (justPressed(PAD_DOWN)) this.onCycleGraphics();
       else if (otherJustPressed()) this.onActivate();
     } else if (justPressed(PAD_MENU)) {
       this.onDeactivate();

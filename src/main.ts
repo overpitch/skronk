@@ -12,6 +12,7 @@ import { GAME_PORT } from "./net/protocol";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { lerp, vec3 } from "./math/vec3";
 import { applySnapshot } from "./net/snapshot";
+import { browserDevice, chooseQuality, type QualitySetting } from "./render/quality";
 import { GameRenderer } from "./render/renderer";
 import type { LevelData } from "./level/types";
 import type { PlayerCommand } from "./sim/command";
@@ -118,7 +119,11 @@ async function start() {
   };
   setBots(botCount);
   const nameOf = (id: PlayerId) => (id === localId ? "yourself" : (net?.names.get(id) ?? names.get(id) ?? `Player ${id}`));
-  const renderer = new GameRenderer(canvas, `${assets}/textures`);
+  // Graphics quality: ?quality=full|light for this visit, else the menu's setting (Auto picks for this device).
+  const qualityParam = params.get("quality");
+  const qualitySetting: QualitySetting = qualityParam === "full" || qualityParam === "light" ? qualityParam : settings.quality;
+  const quality = chooseQuality(qualitySetting, browserDevice());
+  const renderer = new GameRenderer(canvas, `${assets}/textures`, quality.profile);
   renderer.loadLevel(level);
   if (nav && navDebug) renderer.setDebugLines(...navLines(nav));
   window.addEventListener("resize", () => renderer.resize());
@@ -153,6 +158,7 @@ async function start() {
   const volumeSlider = document.getElementById("volume") as HTMLInputElement;
   const volumeValue = document.getElementById("volume-value")!;
   const networkButton = document.getElementById("network") as HTMLButtonElement;
+  const graphicsButton = document.getElementById("graphics") as HTMLButtonElement;
   const nameBox = document.getElementById("player-name") as HTMLInputElement;
   sensSlider.min = String(MOUSE_SENSITIVITY_RANGE.min);
   sensSlider.max = String(MOUSE_SENSITIVITY_RANGE.max);
@@ -167,6 +173,9 @@ async function start() {
     mapButton.textContent = `Map: ${mapTitle}`;
     botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
     difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
+    const modeName = quality.profile.mode === "full" ? "Full" : "Light";
+    graphicsButton.textContent = qualitySetting === "auto" ? `Graphics: Auto (${modeName})` : `Graphics: ${modeName}`;
+    graphicsButton.title = `${modeName}: ${quality.reason}`;
     networkButton.textContent = net ? "Leave network game" : "Join network game";
     // On the live (https) site there's nothing to join until an online server is set up.
     if (!net && location.protocol === "https:" && !onlineServer) {
@@ -254,6 +263,17 @@ async function start() {
     location.assign(next);
   };
   onClick(networkButton, toggleNetwork);
+  // Graphics: Auto, Full, Light, round again. Edge smoothing is fixed when the graphics start, so reload.
+  const cycleGraphics = () => {
+    const order: QualitySetting[] = ["auto", "full", "light"];
+    settings.quality = order[(order.indexOf(qualitySetting) + 1) % order.length];
+    saveSettings(settings);
+    const next = new URL(location.href);
+    next.searchParams.delete("quality");
+    location.assign(next);
+  };
+  onClick(graphicsButton, cycleGraphics);
+  input.onCycleGraphics = cycleGraphics;
   input.onToggleNetwork = toggleNetwork;
   // Your name, for network games. Saved as you type; takes effect next time you join.
   nameBox.addEventListener("input", () => {
@@ -384,7 +404,8 @@ async function start() {
       `${me.origin.x.toFixed(0)} ${me.origin.y.toFixed(0)} ${me.origin.z.toFixed(0)}  tick ${world.tick}\n` +
       `controller: ${input.padStatus ?? "none (press a button to connect)"}` +
       (nav ? `\nnav: ${nav.nodes.length} nodes, ${nav.edgeCount} links` : "") +
-      (net ? `\nnetwork game: you are player ${localId}` : "");
+      (net ? `\nnetwork game: you are player ${localId}` : "") +
+      `\ngraphics: ${quality.profile.mode} (${quality.reason})`;
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
