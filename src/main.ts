@@ -9,6 +9,7 @@ import { DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_R
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { lerp, vec3 } from "./math/vec3";
 import { GameRenderer } from "./render/renderer";
+import type { LevelData } from "./level/types";
 import type { PlayerCommand } from "./sim/command";
 import type { PlayerId, SimEvent } from "./sim/events";
 import { EYE_HEIGHT } from "./sim/movement";
@@ -208,6 +209,8 @@ async function start() {
   });
   applySettings();
   status.textContent = `${mapTitle}: ${level.brushes.length} brushes, ${level.spawns.length} spawns`;
+  // Building maps: on the dev server, check the map and list what's wrong in the menu.
+  if (import.meta.env.DEV) setTimeout(() => void showMapCheck(level, `${assets}/textures`, nav), 100);
 
   const eye = vec3();
   const frameEvents: SimEvent[] = [];
@@ -275,6 +278,35 @@ async function start() {
   requestAnimationFrame(frame);
 
   if (import.meta.env.DEV) Object.assign(window, { skronk: { world, input, renderer, level, bots, nav } });
+}
+
+/** Runs the map checker and shows the results under the menu (dev server only). */
+async function showMapCheck(level: LevelData, textureRoot: string, nav: NavGraph | null) {
+  const { checkLevel } = await import("./devtools/mapCheck");
+  // The dev server answers a missing file with the game page, so look at what came back.
+  const textureExists = async (name: string) => {
+    const res = await fetch(`${textureRoot}/${name}.png`, { method: "HEAD" });
+    return res.ok && (res.headers.get("content-type") ?? "").startsWith("image/");
+  };
+  const issues = await checkLevel(level, { textureExists, nav: nav ?? undefined });
+  const box = document.getElementById("map-check") as HTMLDetailsElement;
+  const count = (l: string) => issues.filter((i) => i.level === l).length;
+  const parts = [["error", "errors"], ["warning", "warnings"], ["note", "notes"]]
+    .map(([l, word]) => (count(l) ? `${count(l)} ${count(l) === 1 ? word.slice(0, -1) : word}` : ""))
+    .filter(Boolean);
+  box.querySelector("summary")!.textContent = parts.length ? `Map check: ${parts.join(", ")}` : "Map check: all good";
+  const list = box.querySelector("ul")!;
+  list.replaceChildren(
+    ...issues.map((i) => {
+      const li = document.createElement("li");
+      li.className = i.level;
+      li.textContent = `${i.level}: ${i.message}`;
+      return li;
+    }),
+  );
+  box.open = count("error") + count("warning") > 0;
+  box.hidden = false;
+  for (const i of issues) console.warn(`[map check] ${i.level}: ${i.message}`);
 }
 
 /** The walk graph as line segments at foot level: walks green, jumps yellow, drops orange. */

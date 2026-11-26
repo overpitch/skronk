@@ -121,6 +121,44 @@ body {
   border-color: rgba(140, 190, 255, 0.8);
 }
 
+/* Map checker results (dev server only): a one-line summary that opens into the list. */
+#overlay #map-check {
+  max-width: min(720px, 90vw);
+  margin-top: 6px;
+  font-size: 14px;
+  text-align: left;
+  pointer-events: auto;
+}
+
+#overlay #map-check summary {
+  cursor: pointer;
+  text-align: center;
+  opacity: 0.85;
+}
+
+#overlay #map-check ul {
+  max-height: 30vh;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+#overlay #map-check li {
+  margin: 4px 0;
+}
+
+#overlay #map-check .error {
+  color: #ff8a80;
+}
+
+#overlay #map-check .warning {
+  color: #ffd180;
+}
+
+#overlay #map-check .note {
+  opacity: 0.7;
+}
+
 #overlay .keys,
 #overlay #status {
   font-size: 14px;

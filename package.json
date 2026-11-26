@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "textures": "node tools/gen-textures.mjs",
     "maps:test": "node tools/make-test-map.mjs",
-    "tb:install": "node tools/install-trenchbroom-config.mjs"
+    "tb:install": "node tools/install-trenchbroom-config.mjs",
+    "maps:check": "node tools/check-maps.mjs"
   },
   "dependencies": {
     "three": "^0.181.2"

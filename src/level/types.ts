@@ -65,6 +65,8 @@ export interface LevelData {
   lights: LightMarker[];
   mins: Vec3;
   maxs: Vec3;
+  /** Problems the loader noticed (degenerate brushes, unknown entities...), for the map checker. */
+  warnings: string[];
 }
 
 export interface LevelLoader {

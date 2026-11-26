@@ -105,8 +105,15 @@ export function buildLevel(name: string, entities: MapEntity[]): LevelData {
       continue;
     }
 
+    if (ent.brushes.length > 0) {
+      warnings.push(`${classname || "an entity"} has brushes, but only world brushes are supported yet; its ${ent.brushes.length} brush(es) are ignored`);
+      continue;
+    }
     const origin = parseVec(ent.properties.origin);
-    if (!origin) continue;
+    if (!origin) {
+      warnings.push(`${classname || "an entity"} has no origin, ignored`);
+      continue;
+    }
     if (classname === "player_spawn") {
       const angle = Number(ent.properties.angle ?? 0);
       spawns.push({
@@ -124,6 +131,8 @@ export function buildLevel(name: string, entities: MapEntity[]): LevelData {
         intensity: Number(ent.properties.light ?? 300) || 300,
         color: [color.x, color.y, color.z],
       });
+    } else {
+      warnings.push(`unknown entity '${classname}' at (${origin.x} ${origin.y} ${origin.z}), ignored`);
     }
   }
 
@@ -131,7 +140,7 @@ export function buildLevel(name: string, entities: MapEntity[]): LevelData {
   if (spawns.length === 0) warnings.push("no player_spawn entities; players will spawn at the map center");
   for (const w of warnings) console.warn(`[level ${name}] ${w}`);
 
-  return { name, surfaces, brushes, spawns, pickups, lights, mins: levelMins, maxs: levelMaxs };
+  return { name, surfaces, brushes, spawns, pickups, lights, mins: levelMins, maxs: levelMaxs, warnings };
 }
 
 export class TrenchBroomLoader implements LevelLoader {
