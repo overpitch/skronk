@@ -69,11 +69,11 @@ async function start() {
   const mapName = serverMap ?? params.get("map") ?? (known(settings.map) ? settings.map : (maps[0]?.name ?? "test_box"));
   const mapTitle = maps.find((m) => m.name === mapName)?.title ?? mapName;
   // Address options override the menu's saved choices for this visit (handy for testing):
-  // ?bots=N bots that roam and fight; ?botskill=0..1 instead of the difficulty;
+  // ?bots=N bots that roam and fight; ?difficulty=beginner|easy|normal|hard instead of the menu's;
   // ?navdebug draws the bots' walk graph; ?mute plays no sound.
   const botCount = net ? 0 : params.has("bots") ? Math.max(0, Math.min(MAX_BOTS, Number(params.get("bots")) || 0)) : settings.bots;
-  const skillParam = Number(params.get("botskill"));
-  let skillOverride = params.has("botskill") && Number.isFinite(skillParam) ? Math.max(0, Math.min(1, skillParam)) : null;
+  const difficultyParam = DIFFICULTIES.find((d) => d.id === params.get("difficulty")) ?? null;
+  let difficultyOverride = difficultyParam;
   const navDebug = params.has("navdebug");
   let muted = params.has("mute");
   // ?dummies=N practice targets (default: one when there are no bots); ?dummyfire makes them shoot back;
@@ -114,7 +114,7 @@ async function start() {
     await new Promise((r) => setTimeout(r)); // let the status show before the build blocks
     nav = buildNavGraph(level, world.collision);
   }
-  const botSkillLevel = () => skillOverride ?? difficultyOf(settings.difficulty).skill;
+  const botSkillLevel = () => (difficultyOverride ?? difficultyOf(settings.difficulty)).skill;
   /** Adds or removes players so there are n of them, made by `make`. */
   const resize = <T extends { id: PlayerId }>(list: T[], n: number, make: (id: PlayerId) => T) => {
     while (list.length > n) {
@@ -199,7 +199,7 @@ async function start() {
     invertButton.setAttribute("aria-pressed", String(settings.invertLook));
     mapButton.textContent = `Map: ${mapTitle}`;
     botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
-    difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
+    difficultyButton.textContent = `Difficulty: ${(difficultyOverride ?? difficultyOf(settings.difficulty)).label}`;
     const preset = matchPreset(settings.match).label;
     matchButton.textContent = rulesParam ? "Match: set in the address" : fighters.length > 0 ? `Match: ${preset}` : `Match: ${preset} (when bots play)`;
     const modeName = quality.profile.mode === "full" ? "Full" : "Light";
@@ -256,9 +256,10 @@ async function start() {
   input.onChangeMap = changeMap;
   const cycleDifficulty = () => {
     if (net) return;
-    const i = DIFFICULTIES.findIndex((d) => d.id === settings.difficulty);
+    // From what's showing (the address's choice, if it gave one).
+    const i = DIFFICULTIES.findIndex((d) => d.id === (difficultyOverride?.id ?? settings.difficulty));
     settings.difficulty = DIFFICULTIES[(i + 1) % DIFFICULTIES.length].id;
-    skillOverride = null;
+    difficultyOverride = null;
     saveSettings(settings);
     for (const b of fighters) b.setSkill(botSkillLevel());
     applySettings();
