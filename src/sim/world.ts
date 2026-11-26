@@ -38,10 +38,13 @@ const POINT: Readonly<Vec3> = Object.freeze(vec3());
 /** Speed cap when coming out of a portal, so falling between a floor and ceiling pair can't run away. */
 const MAX_PORTAL_EXIT_SPEED = 2400;
 /**
- * Safety net only: a shot travels 50 units a tick, so real portal spacing allows a hop or two
- * per tick. If the hop maths ever failed to end, this stops one tick from hanging the game.
+ * Safeguard only, far above anything play produces: a shot travels about 50 units a tick, so
+ * real portal spacing allows a hop or two per tick. If the hop maths ever failed to end, this
+ * stops one tick from hanging the game; the shot just waits at that exit until the next tick.
  */
-const MAX_SHOT_HOPS_PER_TICK = 16;
+const MAX_SHOT_HOPS_PER_TICK = 256;
+/** How far past the level's bounds a shot may go before it's treated as lost. */
+const OUTSIDE_LEVEL_MARGIN = 256;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
 
 export interface PlayerState extends MoveState {
@@ -209,7 +212,6 @@ export class World {
       origin: eye,
       prevOrigin: clone(eye),
       velocity: scale(dir, WEAPON.projectileSpeed),
-      expireTick: this.tick + WEAPON.projectileLifeTicks,
       hops: 0,
     };
     this.projectiles.push(projectile);
@@ -393,6 +395,7 @@ export class World {
       // Fraction of this tick's travel still to go; a portal hop spends part of it.
       let left = 1;
       let done = false;
+      let gone = false;
       for (let hop = 0; hop <= MAX_SHOT_HOPS_PER_TICK && !done; hop++) {
         scale(pr.velocity, TICK_DT * left, delta);
         add(pr.origin, delta, end);
@@ -437,9 +440,6 @@ export class World {
           copy(pr.prevOrigin, exit); // don't draw the tracer across the map
           throughPortalDir(pr.velocity, from, to, pr.velocity);
           pr.hops++;
-          // Each trip through a portal restarts the shot's lifetime: a shot looping between
-          // two facing portals stays as a standing hazard until it hits something or a portal moves.
-          pr.expireTick = this.tick + WEAPON.projectileLifeTicks;
           left *= 1 - portalT;
           this.events.push({ type: "shotThroughPortal", projectile: pr.id, from: from.id, to: to.id, pos, exit: clone(exit) });
           continue;
@@ -449,18 +449,26 @@ export class World {
         if (victim) {
           const pos = vec3(pr.origin.x + delta.x * hitT, pr.origin.y + delta.y * hitT, pr.origin.z + delta.z * hitT);
           this.damage(victim, pr.owner, WEAPON.damage, pos, pr);
-          pr.expireTick = -1;
+          gone = true;
         } else if (wallT < 1) {
           this.events.push({ type: "impact", projectile: pr.id, owner: pr.owner, pos: clone(tr.endPos), normal: clone(tr.normal) });
-          pr.expireTick = -1;
+          gone = true;
         } else {
           copy(pr.origin, end);
         }
       }
-      if (this.tick >= pr.expireTick) continue;
+      // Shots have no lifetime: they fly until they hit something. One that leaves the
+      // level (an open sky, a leak in the map) would never hit anything, so it's removed.
+      if (gone || this.outsideLevel(pr.origin)) continue;
       this.projectiles[kept++] = pr;
     }
     this.projectiles.length = kept;
+  }
+
+  private outsideLevel(v: Vec3): boolean {
+    const { mins, maxs } = this.level;
+    const m = OUTSIDE_LEVEL_MARGIN;
+    return v.x < mins.x - m || v.y < mins.y - m || v.z < mins.z - m || v.x > maxs.x + m || v.y > maxs.y + m || v.z > maxs.z + m;
   }
 
   private damage(victim: PlayerState, attacker: PlayerId, amount: number, pos: Vec3, pr: Projectile) {

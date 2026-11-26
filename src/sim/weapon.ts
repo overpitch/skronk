@@ -12,7 +12,6 @@ export const WEAPON = {
   fireIntervalTicks: Math.max(1, Math.round(0.12 * TICK_RATE)),
   /** Map units per second. */
   projectileSpeed: 3000,
-  projectileLifeTicks: secondsToTicks(2),
   /** Players' hit boxes are grown by this much, so near misses by a hair still count. */
   projectileRadius: 3,
   /** Horizontal speed added to a player per hit, along the shot direction. */
@@ -37,7 +36,6 @@ export interface Projectile {
   /** Position at the start of the last tick, for render interpolation. */
   prevOrigin: Vec3;
   velocity: Vec3;
-  expireTick: number;
   /** Portals passed through. After the first, the shot can hit whoever fired it. */
   hops: number;
 }

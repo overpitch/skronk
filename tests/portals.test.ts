@@ -323,7 +323,7 @@ describe("shooting through portals", () => {
       world.step(new Map([[p.id, emptyCommand()]]));
       hops += world.events.filter((e) => e.type === "shotThroughPortal").length;
     }
-    expect(world.projectiles).toHaveLength(1); // still going after 10 s, five lifetimes
+    expect(world.projectiles).toHaveLength(1); // still going after 10 s: shots have no lifetime
     expect(hops).toBeGreaterThan(20);
     // Walk into its path and it hits you.
     place(p, 0, 0);
@@ -333,6 +333,16 @@ describe("shooting through portals", () => {
       hit = world.events.some((e) => e.type === "hit" && e.victim === p.id);
     }
     expect(hit).toBe(true);
+    expect(world.projectiles).toHaveLength(0);
+  });
+
+  it("removes a shot that leaves the level, since it could never hit anything", () => {
+    const { world, p } = setup();
+    world.step(new Map([[p.id, { ...emptyCommand(), yaw: 0, fire: true }]]));
+    expect(world.projectiles).toHaveLength(1);
+    // As if it had flown out through an open sky.
+    set(world.projectiles[0].origin, 0, 0, world.level.maxs.z + 1000);
+    world.step(new Map([[p.id, emptyCommand()]]));
     expect(world.projectiles).toHaveLength(0);
   });
 
