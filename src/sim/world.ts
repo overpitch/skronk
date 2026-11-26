@@ -127,6 +127,22 @@ export class World {
     this.removePortals((pt) => pt.owner === owner);
   }
 
+  /**
+   * Replaces every portal with `list` (a network client copying the server's world).
+   * Rebuilds the walk-through openings; does nothing if the list hasn't changed.
+   */
+  restorePortals(list: readonly Portal[]) {
+    const same =
+      list.length === this.portals.length && list.every((p, i) => p.id === this.portals[i].id && p.placedTick === this.portals[i].placedTick);
+    if (same) return;
+    this.portals.length = 0;
+    this.passages.clear();
+    for (const p of list) {
+      this.portals.push(p);
+      this.passages.set(p.id, buildPassage(this.level, p));
+    }
+  }
+
   /** Whose portal pair this player places into. Team modes can map players to a team key here. */
   portalOwnerOf(p: PlayerState): PortalOwner {
     return playerPortalOwner(p.id);

@@ -5,9 +5,11 @@ import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
 import { LocalInput } from "./client/localInput";
+import { NetClient, serverAddress } from "./client/netClient";
 import { DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { lerp, vec3 } from "./math/vec3";
+import { applySnapshot } from "./net/snapshot";
 import { GameRenderer } from "./render/renderer";
 import type { LevelData } from "./level/types";
 import type { PlayerCommand } from "./sim/command";
@@ -15,6 +17,7 @@ import type { PlayerId, SimEvent } from "./sim/events";
 import { EYE_HEIGHT } from "./sim/movement";
 import { TICK_DT, World } from "./sim/world";
 
+/** Your player id in a game on this machine (a network game gets one from the server). */
 const LOCAL_PLAYER = 1;
 /** Lower the view while dead so it reads as being down. */
 const DEAD_EYE_DROP = 30;
@@ -29,21 +32,34 @@ const debug = document.getElementById("debug")!;
 async function start() {
   const params = new URLSearchParams(location.search);
   const settings = loadSettings();
+  // ?join plays on the game server (npm run server) on the machine this page came from;
+  // ?join=host or ?join=host:port another one. The server picks the map and the bots.
+  let net: NetClient | null = null;
+  let localId = LOCAL_PLAYER;
+  let serverMap: string | null = null;
+  if (params.has("join")) {
+    const url = serverAddress(params.get("join") ?? "");
+    status.textContent = `Joining ${url}…`;
+    const joined = await NetClient.connect(url);
+    net = joined.net;
+    localId = joined.welcome.id;
+    serverMap = joined.welcome.map;
+  }
   // ?map=<name> plays public/assets/maps/<name>.map this visit; otherwise the menu's choice.
   const known = (name: string | null) => !!name && maps.some((m) => m.name === name);
-  const mapName = params.get("map") ?? (known(settings.map) ? settings.map : (maps[0]?.name ?? "test_box"));
+  const mapName = serverMap ?? params.get("map") ?? (known(settings.map) ? settings.map : (maps[0]?.name ?? "test_box"));
   const mapTitle = maps.find((m) => m.name === mapName)?.title ?? mapName;
   // Address options override the menu's saved choices for this visit (handy for testing):
   // ?bots=N bots that roam and fight; ?botskill=0..1 instead of the difficulty;
   // ?navdebug draws the bots' walk graph; ?mute plays no sound.
-  const botCount = params.has("bots") ? Math.max(0, Math.min(MAX_BOTS, Number(params.get("bots")) || 0)) : settings.bots;
+  const botCount = net ? 0 : params.has("bots") ? Math.max(0, Math.min(MAX_BOTS, Number(params.get("bots")) || 0)) : settings.bots;
   const skillParam = Number(params.get("botskill"));
   let skillOverride = params.has("botskill") && Number.isFinite(skillParam) ? Math.max(0, Math.min(1, skillParam)) : null;
   const navDebug = params.has("navdebug");
   let muted = params.has("mute");
   // ?dummies=N practice targets (default: one when there are no bots); ?dummyfire makes them shoot back;
   // ?dummyspeed=0..1 sets how fast they strafe (0 stands still).
-  const dummiesParam = params.has("dummies") ? Math.max(0, Math.min(8, Number(params.get("dummies")) || 0)) : null;
+  const dummiesParam = net ? 0 : params.has("dummies") ? Math.max(0, Math.min(8, Number(params.get("dummies")) || 0)) : null;
   const dummiesShoot = params.has("dummyfire");
   const speedParam = Number(params.get("dummyspeed"));
   const dummySpeed = params.has("dummyspeed") && Number.isFinite(speedParam) ? Math.max(0, Math.min(1, speedParam)) : DUMMY_DEFAULT_SPEED;
@@ -52,12 +68,13 @@ async function start() {
   const level = await new TrenchBroomLoader().load(`${assets}/maps/${mapName}.map`);
 
   const world = new World(level);
-  const me = world.addPlayer(LOCAL_PLAYER);
+  // In a network game this is a mirror of the server's world, overwritten by every snapshot.
+  const me = world.addPlayer(localId);
   // Everyone who isn't you: practice dummies and bots, both just command sources.
   const bots: { id: PlayerId; command(world: World): PlayerCommand }[] = [];
   const dummies: TargetDummy[] = [];
   const fighters: Bot[] = [];
-  const names = new Map<PlayerId, string>([[LOCAL_PLAYER, "yourself"]]);
+  const names = new Map<PlayerId, string>([[localId, "yourself"]]);
   let nextId = LOCAL_PLAYER + 1;
   let nav: NavGraph | null = null;
   if (botCount > 0 || navDebug) {
@@ -91,7 +108,7 @@ async function start() {
     bots.push(...dummies, ...fighters);
   };
   setBots(botCount);
-  const nameOf = (id: PlayerId) => names.get(id) ?? `Player ${id}`;
+  const nameOf = (id: PlayerId) => (id === localId ? "yourself" : (net?.names.get(id) ?? names.get(id) ?? `Player ${id}`));
   const renderer = new GameRenderer(canvas, `${assets}/textures`);
   renderer.loadLevel(level);
   if (nav && navDebug) renderer.setDebugLines(...navLines(nav));
@@ -139,6 +156,13 @@ async function start() {
     mapButton.textContent = `Map: ${mapTitle}`;
     botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
     difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
+    if (net) {
+      // The server decides these in a network game.
+      mapButton.textContent = `Map: ${mapTitle} (server)`;
+      botButton.textContent = "Bots: set on the server";
+      difficultyButton.textContent = "Difficulty: set on the server";
+      for (const b of [mapButton, botButton, difficultyButton]) b.disabled = true;
+    }
     const volume = muted ? 0 : settings.volume;
     sfx.setVolume(volume);
     volumeSlider.value = String(volume);
@@ -151,6 +175,7 @@ async function start() {
       button.blur();
     });
   const changeBots = (n: number) => {
+    if (net) return;
     settings.bots = Math.max(0, Math.min(MAX_BOTS, n));
     saveSettings(settings);
     setBots(settings.bots);
@@ -161,7 +186,7 @@ async function start() {
   input.onChangeBots = (delta) => changeBots(fighters.length + delta);
   // Another map: saved, then the page reloads with it (a fresh match).
   const changeMap = (delta: number) => {
-    if (maps.length < 2) return;
+    if (net || maps.length < 2) return;
     const i = Math.max(0, maps.findIndex((m) => m.name === mapName));
     const next = maps[(i + delta + maps.length) % maps.length].name;
     settings.map = next;
@@ -173,6 +198,7 @@ async function start() {
   onClick(mapButton, () => changeMap(1));
   input.onChangeMap = changeMap;
   const cycleDifficulty = () => {
+    if (net) return;
     const i = DIFFICULTIES.findIndex((d) => d.id === settings.difficulty);
     settings.difficulty = DIFFICULTIES[(i + 1) % DIFFICULTIES.length].id;
     skillOverride = null;
@@ -208,9 +234,17 @@ async function start() {
     sensSlider.blur();
   });
   applySettings();
-  status.textContent = `${mapTitle}: ${level.brushes.length} brushes, ${level.spawns.length} spawns`;
+  status.textContent = net
+    ? `${mapTitle}: on the game server, ${net.names.size} in the game`
+    : `${mapTitle}: ${level.brushes.length} brushes, ${level.spawns.length} spawns`;
+  if (net) {
+    net.onClose = (reason) => {
+      input.onDeactivate();
+      status.textContent = `${reason} Reload the page to join again.`;
+    };
+  }
   // Building maps: on the dev server, check the map and list what's wrong in the menu.
-  if (import.meta.env.DEV) setTimeout(() => void showMapCheck(level, `${assets}/textures`, nav), 100);
+  if (import.meta.env.DEV && !net) setTimeout(() => void showMapCheck(level, `${assets}/textures`, nav), 100);
 
   const eye = vec3();
   const frameEvents: SimEvent[] = [];
@@ -229,19 +263,30 @@ async function start() {
     let ticks = 0;
     frameEvents.length = 0;
     while (acc >= TICK_DT && ticks < MAX_TICKS_PER_FRAME) {
-      const commands = new Map<PlayerId, PlayerCommand>();
       const local = input.command();
-      commands.set(LOCAL_PLAYER, active ? local : { ...local, forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false });
-      for (const bot of bots) commands.set(bot.id, bot.command(world));
-      world.step(commands);
-      for (const e of world.events) {
+      const mine = active ? local : { ...local, forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false };
+      // This tick's events: from our own step, or from the server's snapshots.
+      const tickEvents: SimEvent[] = [];
+      if (net) {
+        net.sendCommand(mine);
+        for (const snap of net.take()) {
+          applySnapshot(world, snap);
+          tickEvents.push(...snap.events);
+        }
+      } else {
+        const commands = new Map<PlayerId, PlayerCommand>([[localId, mine]]);
+        for (const bot of bots) commands.set(bot.id, bot.command(world));
+        world.step(commands);
+        tickEvents.push(...world.events);
+      }
+      for (const e of tickEvents) {
         frameEvents.push(e);
         // Respawning faces you the way the spawn point says; a portal turns you to face out of the exit.
-        if (e.type === "respawn" && e.player === LOCAL_PLAYER) {
+        if (e.type === "respawn" && e.player === localId) {
           input.yaw = me.yaw;
           input.pitch = 0;
         }
-        if (e.type === "teleport" && e.player === LOCAL_PLAYER) {
+        if (e.type === "teleport" && e.player === localId) {
           input.yaw = me.yaw;
           input.pitch = me.pitch;
         }
@@ -256,9 +301,9 @@ async function start() {
     lerp(me.prevOrigin, me.origin, alpha, eye);
     eye.z += EYE_HEIGHT - (me.alive ? 0 : DEAD_EYE_DROP);
     const time = now / 1000;
-    renderer.render({ world, localId: LOCAL_PLAYER, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt }, frameEvents);
+    renderer.render({ world, localId, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt }, frameEvents);
     hud.update(world, me, frameEvents, dt);
-    sfx.play(frameEvents, LOCAL_PLAYER, eye, input.yaw);
+    sfx.play(frameEvents, localId, eye, input.yaw);
 
     fpsFrames++;
     fpsTime += dt;
@@ -272,12 +317,13 @@ async function start() {
       `${fps} fps  ${speed} ups  ${me.onGround ? "ground" : "air"}\n` +
       `${me.origin.x.toFixed(0)} ${me.origin.y.toFixed(0)} ${me.origin.z.toFixed(0)}  tick ${world.tick}\n` +
       `controller: ${input.padStatus ?? "none (press a button to connect)"}` +
-      (nav ? `\nnav: ${nav.nodes.length} nodes, ${nav.edgeCount} links` : "");
+      (nav ? `\nnav: ${nav.nodes.length} nodes, ${nav.edgeCount} links` : "") +
+      (net ? `\nnetwork game: you are player ${localId}` : "");
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
 
-  if (import.meta.env.DEV) Object.assign(window, { skronk: { world, input, renderer, level, bots, nav } });
+  if (import.meta.env.DEV) Object.assign(window, { skronk: { world, input, renderer, level, bots, nav, net } });
 }
 
 /** Runs the map checker and shows the results under the menu (dev server only). */

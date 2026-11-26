@@ -5,7 +5,8 @@ Browser arena shooter with personal portals. Full brief: [docs/brief.md](docs/br
 ## Commands
 
 - `npm run dev`: dev server on http://localhost:5173 (`--host`, so other devices on the LAN, like the Xbox, can open it)
-- `npm test`: vitest (parser, brush geometry, collision, movement)
+- `npm test`: vitest (parser, brush geometry, collision, movement, portals, bots, map check, network)
+- `npm run server -- --map arena --bots 2 --difficulty easy`: game server for network play (port 5175). Browsers join with `?join` on the dev server's address (`http://<mac>:5173/?join`); `?join=host[:port]` for another machine.
 - `npm run typecheck` / `npm run build`
 - `npm run textures`: regenerate the placeholder PNGs in `public/assets/textures/base/`
 - `npm run maps:test`: regenerate `public/assets/maps/test_box.map`
@@ -28,6 +29,7 @@ Bots and difficulty are menu settings (saved per browser; controller LB/RB bots,
 - `src/level/types.ts` is the loader interface. The sim reads `LevelData`, never `.map` text. `src/level/trenchbroom/` is one loader implementation.
 - `src/render/` reads sim state and draws it. `src/client/` owns the browser: input devices, HUD, audio, settings, main loop.
 - `src/bots/` turns world state into `PlayerCommand`s. Bots never touch sim state directly.
+- Network play (milestone 7): `server/` runs the one true `World` (and the bots) in Node; browsers send a `PlayerCommand` per tick and get a full `WorldSnapshot` per tick (`src/net/`). A joined client's `World` is a mirror: never stepped, overwritten by `applySnapshot`, so render/HUD/audio work unchanged. Messages are JSON for now.
 - The sim reports what happened each tick in `world.events` (shots, hits, kills, pickups). Effects, sound and HUD react to those; the sim never reads them back.
 - Teleports (respawn, later portals) must set `prevOrigin` too, or the renderer interpolates across the map.
 - Coordinates everywhere: map units (1 unit ≈ 1 inch), **Z up**, right-handed, same as the `.map` file. Three.js runs Z-up too (`camera.up = (0,0,1)`); no axis conversion.
