@@ -34,6 +34,8 @@ export interface QualityProfile {
   portalViewScale: number;
   /** Smoothed edges inside portal views (samples; 0 for none). */
   portalSamples: number;
+  /** Player bodies with rounded limbs, helmet and armour pieces (else plain blocks). */
+  detailedBodies: boolean;
 }
 
 export const QUALITY: Record<QualityMode, QualityProfile> = {
@@ -49,6 +51,7 @@ export const QUALITY: Record<QualityMode, QualityProfile> = {
     maxPortalViews: 4,
     portalViewScale: 1,
     portalSamples: 4,
+    detailedBodies: true,
   },
   light: {
     mode: "light",
@@ -62,6 +65,7 @@ export const QUALITY: Record<QualityMode, QualityProfile> = {
     maxPortalViews: 2,
     portalViewScale: 0.5,
     portalSamples: 0,
+    detailedBodies: false,
   },
 };
 

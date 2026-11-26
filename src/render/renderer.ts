@@ -90,7 +90,7 @@ export class GameRenderer {
     this.scene.background = new THREE.Color(0x0b0d12);
     this.textures = new TextureLibrary(textureRoot, Math.min(quality.anisotropy, this.renderer.capabilities.getMaxAnisotropy()));
     this.effects = new Effects(this.scene);
-    this.players = new PlayerModels(this.scene, quality.shadows);
+    this.players = new PlayerModels(this.scene, quality.detailedBodies, quality.shadows);
     this.portals = new PortalViews(this.scene, {
       maxViews: quality.maxPortalViews,
       scale: quality.portalViewScale,
@@ -224,7 +224,17 @@ export class GameRenderer {
       this.v1.set(p.prevOrigin.x, p.prevOrigin.y, p.prevOrigin.z);
       this.v2.set(p.origin.x, p.origin.y, p.origin.z);
       this.v1.lerp(this.v2, alpha);
-      this.players.place(p.id, this.v1.x, this.v1.y, this.v1.z, p.yaw, p.alive);
+      this.players.place(p.id, {
+        x: this.v1.x,
+        y: this.v1.y,
+        z: this.v1.z,
+        yaw: p.yaw,
+        pitch: p.pitch,
+        vx: p.velocity.x,
+        vy: p.velocity.y,
+        onGround: p.onGround,
+        alive: p.alive,
+      });
     }
     this.players.update(dt);
 
@@ -333,6 +343,7 @@ export class GameRenderer {
           this.tracerOffsets.set(e.projectile, { offset: new THREE.Vector3(), born: now });
           break;
         case "fire":
+          this.players.fired(e.player);
           if (e.player !== localId) break;
           if (!predictedFire) this.localShot();
           this.muzzle(this.v1);
