@@ -69,7 +69,9 @@ export const WEAPONS: readonly WeaponSpec[] = [
     name: "Fists",
     shot: "melee",
     fireTicks: secondsToTicks(0.45),
-    damage: 35,
+    // A quarter of the machine gun's damage per second, and only at arm's length: a last resort.
+    // The shove (and punch-jumping) is what fists are really for.
+    damage: 10,
     range: 64,
     radius: 6,
     knockback: 420,

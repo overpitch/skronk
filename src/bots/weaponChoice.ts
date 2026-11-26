@@ -7,7 +7,7 @@ import { canFire, FISTS, WEAPONS, weaponIndex, type Armed, type WeaponId } from 
 
 /** How good each weapon is at a distance, about 0..1. */
 const SUITS: Record<WeaponId, (d: number) => number> = {
-  fists: (d) => (d < 90 ? 0.7 : 0.02),
+  fists: (d) => (d < 90 ? 0.3 : 0.02),
   machinegun: (d) => (d < 1200 ? 0.5 : 0.35),
   shotgun: (d) => (d < 250 ? 1.25 : d < 450 ? 0.75 : 0.15),
   // Too close and the blast hurts you too.

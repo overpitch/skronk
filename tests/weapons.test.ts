@@ -325,3 +325,15 @@ describe("bots' choice of weapon", () => {
     expect(chooseWeapon(empty, 50)).toBe(FISTS);
   });
 });
+
+describe("fists against the machine gun", () => {
+  it("do far less damage per second: a last resort, not a rival", () => {
+    const perSecond = (id: "fists" | "machinegun") => (weaponById(id).damage * 60) / weaponById(id).fireTicks;
+    expect(perSecond("fists")).toBeLessThan(perSecond("machinegun") * 0.3);
+  });
+
+  it("aren't a bot's choice up close while the machine gun has ammo", () => {
+    const me = { weapon: MACHINE_GUN, weapons: (1 << FISTS) | (1 << MACHINE_GUN), ammo: WEAPONS.map(() => 50) };
+    expect(chooseWeapon(me, 40)).toBe(MACHINE_GUN);
+  });
+});
