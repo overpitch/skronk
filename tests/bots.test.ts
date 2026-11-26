@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { set, vec3 } from "../src/math/vec3";
 import { Bot, botSkill } from "../src/bots/bot";
+import { choosePickup } from "../src/bots/wants";
 import type { PlayerCommand } from "../src/sim/command";
 import type { SimEvent } from "../src/sim/events";
 import { buildNavGraph } from "../src/bots/nav";
 import { Navigator } from "../src/bots/navigator";
 import { emptyCommand } from "../src/sim/command";
-import { World } from "../src/sim/world";
+import { World, type PlayerState } from "../src/sim/world";
 import { loadTestMap } from "./helpers";
 
 const level = loadTestMap();
@@ -140,7 +141,7 @@ describe("fighting bots", () => {
 
   it("turns on whoever shoots it from behind", () => {
     // Bot faces away (+x); the target, behind it, shoots it in the back.
-    const { world, bot, b } = duel([0, 0, FLOOR], 0, [-400, 0, FLOOR]);
+    const { world, bot, b, t } = duel([0, 0, FLOOR], 0, [-400, 0, FLOOR]);
     let hitBack = false;
     for (let i = 0; i < 4 * 60 && !hitBack; i++) {
       for (const e of run(world, bot, 1, () => ({ ...emptyCommand(), yaw: 0, fire: i % 7 === 0 }))) {
@@ -148,7 +149,9 @@ describe("fighting bots", () => {
       }
     }
     expect(hitBack).toBe(true);
-    expect(Math.abs(Math.abs(b.yaw) - Math.PI)).toBeLessThan(0.3); // facing back towards -x
+    // Facing the shooter from wherever it has moved to.
+    const toShooter = Math.atan2(t.origin.y - b.origin.y, t.origin.x - b.origin.x);
+    expect(Math.abs(Math.atan2(Math.sin(b.yaw - toShooter), Math.cos(b.yaw - toShooter)))).toBeLessThan(0.3);
   });
 
   it("chases to where it last saw an enemy who ducked out of sight", () => {
@@ -164,12 +167,13 @@ describe("fighting bots", () => {
 
   it("doesn't strafe off the ledge while fighting someone below (walking down the ramp is fine)", () => {
     // Target out on the floor, in clear view of the ledge (not behind the pillar).
-    const { world, bot, b } = duel([-416, 400, LEDGE], Math.atan2(-700, 316), [-100, -300, FLOOR]);
+    const { world, bot, b, t } = duel([-416, 400, LEDGE], Math.atan2(-700, 316), [-100, -300, FLOOR]);
     let shots = 0;
     // Every time it leaves the ground, how far below the take-off point it lands.
     let takeoff: number | null = null;
     let biggestDrop = 0;
-    for (let i = 0; i < 5 * 60; i++) {
+    // Only while the fight is on: once the target is down, a route to a pickup may drop off the ledge.
+    for (let i = 0; i < 5 * 60 && t.alive; i++) {
       shots += run(world, bot, 1).filter((e) => e.type === "fire").length;
       if (!b.onGround && takeoff === null) takeoff = b.prevOrigin.z;
       if (b.onGround && takeoff !== null) {
@@ -209,5 +213,73 @@ describe("fighting bots", () => {
     // A bot decides from where it stands at the start of a tick; the shot leaves from where it
     // is after moving that tick, so now and then it has just stepped behind cover.
     expect(blind).toBeLessThan(fires * 0.02);
+  });
+});
+
+describe("bots and pickups", () => {
+  // test_box pickups: health on the platform (352, -384), armor on the ledge (-416, 384), ammo on the floor (0, 400).
+  const kinds = () => level.pickups.map((p) => p.kind);
+  const index = (kind: string) => kinds().indexOf(kind);
+
+  function lone(at: [number, number, number], setup: (p: PlayerState) => void) {
+    const world = new World(level);
+    const bot = new Bot(2, nav);
+    const p = world.addPlayer(2);
+    set(p.origin, ...at);
+    set(p.prevOrigin, ...at);
+    setup(p);
+    const runFor = (seconds: number, until: () => boolean) => {
+      for (let i = 0; i < seconds * 60 && !until(); i++) world.step(new Map([[2, bot.command(world)]]));
+    };
+    return { world, bot, p, runFor };
+  }
+
+  it("goes and gets ammo when it runs out", () => {
+    const { p, runFor } = lone([0, -300, FLOOR], (p) => (p.ammo = 0));
+    runFor(10, () => p.ammo > 0);
+    expect(p.ammo).toBe(50);
+  });
+
+  it("goes and gets health when it's hurt", () => {
+    const { p, runFor } = lone([-300, 0, FLOOR], (p) => (p.health = 20));
+    runFor(12, () => p.health > 20);
+    expect(p.health).toBe(45);
+  });
+
+  it("picks up armor in passing when it's close", () => {
+    const { p, runFor } = lone([-416, 300, LEDGE], (p) => (p.armor = 0));
+    runFor(4, () => p.armor > 0);
+    expect(p.armor).toBe(50);
+  });
+
+  it("skips a pickup that won't be back by the time it gets there", () => {
+    const { world, p } = lone([0, -300, FLOOR], (p) => (p.ammo = 0));
+    expect(choosePickup(world, p, nav)?.index).toBe(index("ammo"));
+    world.pickups[index("ammo")].availableAtTick = world.tick + 60 * 60;
+    expect(choosePickup(world, p, nav)?.index).not.toBe(index("ammo"));
+  });
+
+  it("backs off towards health while still shooting when it's hurting in a fight", () => {
+    const world = new World(level);
+    const bot = new Bot(2, nav);
+    const b = world.addPlayer(2);
+    const t = world.addPlayer(3);
+    // Bot in the open near the platform's steps, the target off to the west.
+    set(b.origin, 150, -150, FLOOR);
+    set(b.prevOrigin, 150, -150, FLOOR);
+    b.yaw = Math.PI;
+    b.health = 25;
+    set(t.origin, -350, -150, FLOOR);
+    set(t.prevOrigin, -350, -150, FLOOR);
+    const health = world.pickups[index("health")].origin;
+    const dist = () => Math.hypot(b.origin.x - health.x, b.origin.y - health.y);
+    const start = dist();
+    let shots = 0;
+    for (let i = 0; i < 90 && b.health === 25; i++) {
+      world.step(new Map([[2, bot.command(world)], [3, emptyCommand()]]));
+      shots += world.events.filter((e) => e.type === "fire" && e.player === 2).length;
+    }
+    expect(shots).toBeGreaterThan(0);
+    expect(dist()).toBeLessThan(start - 100);
   });
 });

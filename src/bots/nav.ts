@@ -137,6 +137,13 @@ export class NavGraph {
     return null;
   }
 
+  /** Ticks to run a route from findPath. */
+  routeCost(path: readonly number[]): number {
+    let ticks = 0;
+    for (let i = 1; i < path.length; i++) ticks += this.edge(path[i - 1], path[i])?.cost ?? 0;
+    return ticks;
+  }
+
   get edgeCount(): number {
     return this.nodes.reduce((n, node) => n + node.edges.length, 0);
   }

@@ -3,8 +3,10 @@
  *
  * - Perceives: enemies in its field of view with a clear line of sight. Being
  *   shot makes it aware of the shooter wherever they are.
- * - Decides: fight a visible enemy; otherwise chase to where it last saw one;
- *   otherwise roam the map.
+ * - Decides: fight a visible enemy (retreating towards health while it shoots,
+ *   if it's hurting); otherwise fetch a pickup it badly needs (out of ammo, low
+ *   on health); otherwise chase to where it last saw an enemy; otherwise grab
+ *   any pickup worth the trip; otherwise roam the map.
  * - Aims like a person, not a turret: it reacts after a delay, turns at a
  *   limited rate, leads moving targets only partly, and its aim wanders. It
  *   fires only when its aim is on (what it believes is) the target.
@@ -23,6 +25,7 @@ import type { PlayerId, PlayerState, World } from "../sim/world";
 import type { NavGraph } from "./nav";
 import { Navigator, type Steer } from "./navigator";
 import { hash, signedHash } from "./random";
+import { choosePickup, LOW_AMMO, LOW_HEALTH, pickupWorth } from "./wants";
 
 export interface BotSkill {
   /** Ticks from first seeing an enemy to the first shot. */
@@ -71,12 +74,18 @@ const FOOT_MAXS = vec3(4, 4, PLAYER_MAXS.z);
 /** Aim point above the origin: the middle of the body. */
 const CHEST = (PLAYER_MINS.z + PLAYER_MAXS.z) / 2;
 const TAU = Math.PI * 2;
+/** How often it reconsiders which pickup to go for. */
+const RETHINK_TICKS = 30;
 
 const wrap = (a: number) => a - TAU * Math.floor((a + Math.PI) / TAU);
 
 export class Bot {
   private nav: Navigator;
+  private graph: NavGraph;
   private skill: BotSkill;
+  /** Pickup it's heading for (index into world.pickups), or -1. */
+  private fetch = -1;
+  private rethinkTick = 0;
   private yaw = 0;
   private pitch = 0;
   private started = false;
@@ -99,6 +108,7 @@ export class Bot {
     skill = DEFAULT_BOT_SKILL,
   ) {
     this.nav = new Navigator(id, nav);
+    this.graph = nav;
     this.skill = botSkill(skill);
   }
 
@@ -116,6 +126,8 @@ export class Bot {
       this.lastSeen = null;
       this.targetVisible = false;
       this.started = false;
+      this.fetch = -1;
+      this.rethinkTick = 0;
       return cmd;
     }
     if (!this.started) {
@@ -125,6 +137,9 @@ export class Bot {
     }
 
     this.perceive(world, me);
+    this.chooseFetch(world, me);
+    const pickup = this.fetch >= 0 ? world.pickups[this.fetch] : null;
+    const urgent = !!pickup && (me.ammo < LOW_AMMO || me.health < LOW_HEALTH);
     const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
     const target = this.target === null ? null : (world.players.get(this.target) ?? null);
     let lookYaw = this.yaw;
@@ -149,7 +164,13 @@ export class Bot {
         lookYaw = this.yaw;
         lookPitch = this.pitch;
       }
-      steer = this.fightMove(world, me, target);
+      if (pickup && pickup.kind === "health" && me.health < LOW_HEALTH) {
+        // Hurting: back off towards health, still shooting.
+        this.nav.goTo(pickup.origin);
+        steer = this.nav.steer(world, me);
+      } else {
+        steer = this.fightMove(world, me, target);
+      }
       this.turn(lookYaw, lookPitch);
       const dist = Math.hypot(ax, ay, az);
       const onTarget = Math.atan2(PLAYER_MAXS.x, dist);
@@ -158,18 +179,26 @@ export class Bot {
         Math.abs(wrap(lookYaw - this.yaw)) < onTarget &&
         Math.abs(lookPitch - this.pitch) < onTarget * 1.5;
     } else {
-      if (target && this.lastSeen && world.tick - this.seenTick < MEMORY_TICKS) {
+      const chasing = !!target && !!this.lastSeen && world.tick - this.seenTick < MEMORY_TICKS;
+      let lookAhead = true;
+      if (pickup && (urgent || !chasing)) {
+        // Fetch: a pickup it badly needs beats a chase; otherwise only when there's no one to chase.
+        this.nav.goTo(pickup.origin);
+      } else if (chasing) {
         // Chase: run to where it was last seen, looking that way.
         this.nav.goTo(this.lastSeen);
         if (this.nav.arrived || this.nav.unreachable) this.forget();
-        lookYaw = Math.atan2(this.lastSeen.y - me.origin.y, this.lastSeen.x - me.origin.x);
+        else {
+          lookYaw = Math.atan2(this.lastSeen!.y - me.origin.y, this.lastSeen!.x - me.origin.x);
+          lookAhead = false;
+        }
       } else {
         this.forget();
         this.nav.goTo(null);
       }
       steer = this.nav.steer(world, me);
-      // Roaming (or chasing round corners): look where you're going.
-      if (steer.dir && !this.lastSeen) lookYaw = Math.atan2(steer.dir.y, steer.dir.x);
+      // Roaming, fetching (or chasing round corners): look where you're going.
+      if (steer.dir && lookAhead) lookYaw = Math.atan2(steer.dir.y, steer.dir.x);
       this.turn(lookYaw, lookPitch);
     }
 
@@ -184,6 +213,17 @@ export class Bot {
     }
     cmd.jump = steer.jump;
     return cmd;
+  }
+
+  /** Which pickup to go for, reconsidered every RETHINK_TICKS or as soon as the current one is no use. */
+  private chooseFetch(world: World, me: PlayerState) {
+    const current = this.fetch >= 0 ? world.pickups[this.fetch] : null;
+    // Taken (by us or someone else) or no longer any use: drop it now.
+    const useless = current && (pickupWorth(me, current) <= 0 || (current.availableAtTick > world.tick && this.nav.arrived));
+    if (useless) this.fetch = -1;
+    if (world.tick < this.rethinkTick && !useless) return;
+    this.rethinkTick = world.tick + RETHINK_TICKS + (this.id % 7); // bots spread their thinking out
+    this.fetch = choosePickup(world, me, this.graph)?.index ?? -1;
   }
 
   private forget() {
