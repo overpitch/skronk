@@ -65,6 +65,11 @@ function ammoUrgency(me: PlayerState): number {
   return !hasGunAmmo(me) ? 6 : ammoShare(me) < LOW_AMMO_SHARE ? 3 : 1;
 }
 
+/** How much a pickup is worth going for, given how far away it is (ticks). */
+export function pickupAppeal(worth: number, ticks: number): number {
+  return worth / (1 + ticks / HALF_APPEAL_TICKS);
+}
+
 export interface PickupChoice {
   index: number;
   appeal: number;
@@ -91,7 +96,7 @@ export function choosePickup(world: World, me: PlayerState, nav: NavGraph, only?
     if (!path) return;
     const ticks = nav.routeCost(path, extra);
     if (pk.availableAtTick > world.tick + ticks) return; // still gone when we'd get there
-    const appeal = worth / (1 + ticks / HALF_APPEAL_TICKS);
+    const appeal = pickupAppeal(worth, ticks);
     if (appeal >= MIN_APPEAL && (!best || appeal > best.appeal)) best = { index, appeal, ticks };
   });
   return best;

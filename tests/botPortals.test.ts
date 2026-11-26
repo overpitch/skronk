@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { set, vec3, type Vec3 } from "../src/math/vec3";
 import { buildNavGraph } from "../src/bots/nav";
 import { Navigator } from "../src/bots/navigator";
+import { Bot } from "../src/bots/bot";
+import { planPortals } from "../src/bots/portalPlanner";
 import { portalLinks } from "../src/bots/portalLinks";
 import { choosePickup } from "../src/bots/wants";
 import { emptyCommand } from "../src/sim/command";
@@ -133,5 +135,46 @@ describe("bots and portals", () => {
     const landing = nav.nodes[fromPit![1][0].to].pos;
     expect(landing.x).toBeLessThan(-600); // came out of the west wall onto the hall floor
     expect(landing.z).toBeCloseTo(FLOOR_Z, 0);
+  });
+
+});
+
+describe("bots placing portals of their own", () => {
+  function ledgeArmorAlone() {
+    const map = loadTestMap("portal_gym");
+    map.pickups = [{ kind: "armor", origin: vec3(896, 448, 273), properties: {} }];
+    const world = new World(map);
+    const me = world.addPlayer(2);
+    place(me, -600, -300);
+    me.armor = 0;
+    return { world, me };
+  }
+
+  it("plan a pair to get onto the ledge: exit high on the east wall, entry on a wall it can walk into", () => {
+    const { world, me } = ledgeArmorAlone();
+    const plan = planPortals(world, nav, me, LEDGE);
+    expect(plan).not.toBeNull();
+    expect(plan!.walkTicks).toBe(Infinity);
+    expect(plan!.exit.placement.origin.x).toBeCloseTo(1024, 0);
+    expect(nav.nodes[plan!.exit.landing].pos.z).toBeGreaterThan(250);
+    expect(plan!.entry.entry).not.toBeNull();
+  });
+
+  it("don't bother when walking is about as quick", () => {
+    const { world, me } = ledgeArmorAlone();
+    expect(planPortals(world, nav, me, vec3(-500, -300, FLOOR_Z))).toBeNull();
+  });
+
+  it("shoot the pair and walk through to the armor on the ledge", () => {
+    const { world, me } = ledgeArmorAlone();
+    const bot = new Bot(2, nav, 0.5);
+    let shots = 0;
+    for (let t = 0; t < 40 * 60 && me.armor === 0; t++) {
+      world.step(new Map([[2, bot.command(world)]]));
+      shots += world.events.filter((e) => e.type === "portalShot" && e.player === 2).length;
+    }
+    expect(me.armor).toBeGreaterThan(0);
+    expect(shots).toBeGreaterThanOrEqual(2);
+    expect(me.origin.z).toBeGreaterThan(250);
   });
 });

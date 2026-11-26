@@ -151,6 +151,54 @@ export class NavGraph {
     return null;
   }
 
+  /** Ticks to get from `from` to every node (Infinity where you can't), taking `extra` edges too. */
+  costsFrom(from: number, extra: ExtraEdges = NO_EXTRA): Float64Array {
+    const cost = new Float64Array(this.nodes.length).fill(Infinity);
+    if (from < 0) return cost;
+    cost[from] = 0;
+    const open = new MinHeap();
+    open.push(from, 0);
+    while (open.size > 0) {
+      const id = open.pop();
+      const base = cost[id];
+      const through = extra.get(id);
+      for (const e of through ? [...this.nodes[id].edges, ...through] : this.nodes[id].edges) {
+        const c = base + e.cost;
+        if (c >= cost[e.to]) continue;
+        cost[e.to] = c;
+        open.push(e.to, c);
+      }
+    }
+    return cost;
+  }
+
+  /** Ticks to get from every node to `to` on foot (Infinity where you can't). */
+  costsTo(to: number): Float64Array {
+    if (!this.reverse) {
+      this.reverse = this.nodes.map(() => []);
+      this.nodes.forEach((n, a) => n.edges.forEach((e) => this.reverse![e.to].push({ from: a, cost: e.cost })));
+    }
+    const cost = new Float64Array(this.nodes.length).fill(Infinity);
+    if (to < 0) return cost;
+    cost[to] = 0;
+    const open = new MinHeap();
+    open.push(to, 0);
+    while (open.size > 0) {
+      const id = open.pop();
+      const base = cost[id];
+      for (const e of this.reverse[id]) {
+        const c = base + e.cost;
+        if (c >= cost[e.from]) continue;
+        cost[e.from] = c;
+        open.push(e.from, c);
+      }
+    }
+    return cost;
+  }
+
+  /** Edges into each node, for costsTo (built when first needed). */
+  private reverse: { from: number; cost: number }[][] | null = null;
+
   /** Ticks to run a route from findPath. */
   routeCost(path: readonly number[], extra: ExtraEdges = NO_EXTRA): number {
     let ticks = 0;

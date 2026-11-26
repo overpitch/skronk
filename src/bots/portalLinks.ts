@@ -15,7 +15,7 @@
 import { addScaled, clone, vec3, type Vec3 } from "../math/vec3";
 import { emptyCommand } from "../sim/command";
 import { PLAYER_MAXS, PLAYER_MINS } from "../sim/movement";
-import { PORTAL, portalLocal, type Portal } from "../sim/portals";
+import { PORTAL, portalLocal, type Placement, type Portal } from "../sim/portals";
 import type { PlayerState, World } from "../sim/world";
 import { NAV_REACH_Z, NAV_SPACING, type ExtraEdges, type NavEdge, type NavGraph } from "./nav";
 
@@ -51,21 +51,21 @@ export function portalLinks(world: World, nav: NavGraph): ExtraEdges {
 }
 
 /** The point to steer at to go into a portal (from a node in front of it, or standing on a floor one). */
-export function portalAim(portal: Portal, from: Vec3): Vec3 {
+export function portalAim(portal: Placement, from: Vec3): Vec3 {
   if (portal.normal.z > 0.7) return clone(portal.origin);
   const p = addScaled(portal.origin, portal.normal, -AIM_DEPTH);
   return vec3(p.x, p.y, from.z);
 }
 
 /** Wall portals you can walk into, and floor portals you can step onto. Ceilings and steep slopes: no. */
-function walkable(p: Portal): "wall" | "floor" | null {
+function walkable(p: Placement): "wall" | "floor" | null {
   if (p.normal.z > 0.7) return "floor";
   if (Math.abs(p.normal.z) < 0.3) return "wall";
   return null;
 }
 
 /** The node to set off from: in front of a wall opening at a height the body fits through, or on a floor portal. */
-function entryNode(nav: NavGraph, p: Portal): number {
+export function entryNode(nav: NavGraph, p: Placement): number {
   const kind = walkable(p);
   if (!kind) return -1;
   let best = -1;

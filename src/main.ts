@@ -21,7 +21,13 @@ import { FREE_PLAY, MATCH_PRESETS, matchPreset, REMATCH_READY_TICKS, type MatchR
 import { EYE_HEIGHT } from "./sim/movement";
 import { secondsToTicks } from "./sim/tick";
 import { TICK_DT, World } from "./sim/world";
-import { canFire, cycleWeapon, WEAPONS, type WeaponId } from "./sim/weapons";
+import { canFire, cycleWeapon, WEAPONS, type Armed, type WeaponId } from "./sim/weapons";
+
+/** The ?allweapons test option: every weapon, full ammo. */
+function armFully(p: Armed) {
+  p.weapons = (1 << WEAPONS.length) - 1;
+  p.ammo = WEAPONS.map((w) => w.maxAmmo);
+}
 
 /** Your player id in a game on this machine (a network game gets one from the server). */
 const LOCAL_PLAYER = 1;
@@ -74,6 +80,8 @@ async function start() {
   // ?dummyspeed=0..1 sets how fast they strafe (0 stands still).
   const dummiesParam = net ? 0 : params.has("dummies") ? Math.max(0, Math.min(8, Number(params.get("dummies")) || 0)) : null;
   const dummiesShoot = params.has("dummyfire");
+  // ?allweapons: every spawn comes with every weapon and full ammo (for testing; your own game only).
+  const allWeapons = params.has("allweapons");
   const speedParam = Number(params.get("dummyspeed"));
   const dummySpeed = params.has("dummyspeed") && Number.isFinite(speedParam) ? Math.max(0, Math.min(1, speedParam)) : DUMMY_DEFAULT_SPEED;
   const assets = `${import.meta.env.BASE_URL}assets`;
@@ -93,6 +101,7 @@ async function start() {
   const world = new World(level, rulesFor(botCount));
   // In a network game this is a mirror of the server's world, overwritten by every snapshot.
   const me = world.addPlayer(localId);
+  if (allWeapons && !net) armFully(me);
   // Everyone who isn't you: practice dummies and bots, both just command sources.
   const bots: { id: PlayerId; command(world: World): PlayerCommand }[] = [];
   const dummies: TargetDummy[] = [];
@@ -416,6 +425,7 @@ async function start() {
         frameEvents.push(e);
         // Respawning faces you the way the spawn point says; a portal turns you to face out of the exit.
         if (e.type === "respawn" && e.player === localId) {
+          if (allWeapons && !net) armFully(me);
           input.yaw = me.yaw;
           input.pitch = 0;
         }

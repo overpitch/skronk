@@ -12,7 +12,11 @@
  *   limited rate, leads moving targets only partly, and its aim wanders. It
  *   fires only when its aim is on (what it believes is) the target.
  * - Moves: strafes side to side while fighting, keeping a sensible distance and
- *   never stepping off a drop; uses the walk graph to chase and roam.
+ *   never stepping off a drop; uses the walk graph to chase and roam, and open
+ *   portals as shortcuts.
+ * - Places portals of its own (portalPlanner.ts, portalJob.ts) to reach a pickup
+ *   it can't walk to, to cut a long trip short, or now and then just to visit
+ *   somewhere only portals reach.
  *
  * One skill number (0..1) sets how quick and accurate it is. Like every
  * participant it only produces PlayerCommands; it reads the world, never writes it.
@@ -26,7 +30,10 @@ import type { PlayerId, PlayerState, World } from "../sim/world";
 import type { NavGraph } from "./nav";
 import { Navigator, type Steer } from "./navigator";
 import { hash, signedHash } from "./random";
-import { choosePickup, LOW_HEALTH, pickupWorth, runningDry } from "./wants";
+import { choosePickup, LOW_HEALTH, pickupWorth, pickupAppeal, runningDry } from "./wants";
+import { portalLinks } from "./portalLinks";
+import { PortalJob } from "./portalJob";
+import { planPortals, preparePortalPlanner, type PortalSpot } from "./portalPlanner";
 import { chooseWeapon, FIGHT_RANGE, hasGunAmmo } from "./weaponChoice";
 
 export interface BotSkill {
@@ -66,6 +73,14 @@ const BRAWL_DISTANCE = 300;
 const WEAPON_RETHINK_TICKS = 15;
 /** Distance it readies a weapon for when there's no one to fight. */
 const ROAM_DISTANCE = 500;
+/** How often it thinks about placing portals of its own. */
+const PORTAL_THINK_TICKS = 4 * TICK_RATE;
+/** A trip longer than this on foot is worth checking for a portal shortcut. */
+const LONG_TRIP_TICKS = 5 * TICK_RATE;
+/** Chance, each time it thinks about portals while just roaming, that it goes somewhere only portals reach. */
+const EXPLORE_CHANCE = 0.45;
+/** Spots that let it down are avoided this long. */
+const FAILED_SPOT_TICKS = 30 * TICK_RATE;
 /**
  * Before strafing a way, check for ground under a spot ahead: further ahead the faster
  * it's going (it takes a while to stop). A drop deeper than SAFE_DROP is off limits.
@@ -109,6 +124,11 @@ export class Bot {
   /** Weapon it wants in hand (index), reconsidered every WEAPON_RETHINK_TICKS. */
   private wantWeapon = -1;
   private weaponTick = 0;
+  /** Placing a pair of its own portals to get somewhere (null when not). */
+  private job: PortalJob | null = null;
+  private portalThinkTick = 0;
+  /** Portal spots whose shots didn't land, and until when it avoids them. */
+  private failedSpots = new Map<PortalSpot, number>();
 
   constructor(
     readonly id: PlayerId,
@@ -143,16 +163,19 @@ export class Bot {
       this.rethinkTick = 0;
       this.wantWeapon = -1;
       this.weaponTick = 0;
+      this.job = null;
       return cmd;
     }
     if (!this.started) {
       this.started = true;
+      preparePortalPlanner(world, this.graph); // once per map: at the start, not mid-fight
       this.yaw = me.yaw;
       this.pitch = 0;
     }
 
     this.perceive(world, me);
     this.chooseFetch(world, me);
+    this.thinkAboutPortals(world, me);
     const pickup = this.fetch >= 0 ? world.pickups[this.fetch] : null;
     const urgent = !!pickup && (runningDry(me) || me.health < LOW_HEALTH);
     const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
@@ -200,6 +223,20 @@ export class Bot {
         since >= this.skill.reactionTicks &&
         Math.abs(wrap(lookYaw - this.yaw)) < onTarget &&
         Math.abs(lookPitch - this.pitch) < onTarget * 1.5;
+    } else if (this.job) {
+      // Placing portals: walk to each spot, stop, aim, fire; then on through them.
+      const t = this.job.tick(world, me, this.nav, this.graph, { yaw: this.yaw, pitch: this.pitch });
+      steer = t.steer;
+      if (t.look) {
+        lookYaw = t.look.yaw;
+        lookPitch = t.look.pitch;
+      } else if (steer.dir) lookYaw = Math.atan2(steer.dir.y, steer.dir.x);
+      cmd.portal = t.portal;
+      this.turnPrecisely(lookYaw, lookPitch, !!t.look);
+      if (!this.job.active) {
+        if (this.job.failedSpot) this.failedSpots.set(this.job.failedSpot, world.tick + FAILED_SPOT_TICKS);
+        this.job = null;
+      }
     } else {
       const chasing = !!target && !!this.lastSeen && world.tick - this.seenTick < MEMORY_TICKS;
       let lookAhead = true;
@@ -242,6 +279,62 @@ export class Bot {
     if (world.tick < this.weaponTick && this.wantWeapon >= 0) return;
     this.weaponTick = world.tick + WEAPON_RETHINK_TICKS;
     this.wantWeapon = chooseWeapon(me, distance);
+  }
+
+  /**
+   * Every few seconds, out of a fight: is there a pickup worth having that only
+   * portals reach, or a long trip a pair would cut short? Or (now and then, just
+   * roaming) somewhere only portals get to? If so, a portal job.
+   */
+  private thinkAboutPortals(world: World, me: PlayerState) {
+    if (this.job || (this.target && this.targetVisible) || world.tick < this.portalThinkTick) return;
+    this.portalThinkTick = world.tick + PORTAL_THINK_TICKS + (this.id % 11) * 3;
+    for (const [spot, until] of this.failedSpots) if (until < world.tick) this.failedSpots.delete(spot);
+    const avoid = new Set(this.failedSpots.keys());
+    const start = this.graph.nearest(me.origin);
+    if (start < 0) return;
+    const onFoot = this.graph.costsFrom(start, portalLinks(world, this.graph));
+
+    // A pickup it's heading for, a long way round on foot: a shortcut?
+    const current = this.fetch >= 0 ? world.pickups[this.fetch] : null;
+    if (current) {
+      const node = this.graph.nearest(current.origin, 3 * 32);
+      if (node >= 0 && onFoot[node] > LONG_TRIP_TICKS) {
+        const plan = planPortals(world, this.graph, me, current.origin, avoid);
+        if (plan) return void (this.job = new PortalJob(plan, current.origin, world.tick));
+      }
+    }
+
+    // The best pickup it can't walk to, if it beats what it's after.
+    let best: { index: number; appeal: number; goal: Vec3 } | null = null;
+    world.pickups.forEach((pk, index) => {
+      if (!pk.known || pk.availableAtTick > world.tick) return;
+      const worth = pickupWorth(me, pk);
+      if (worth < 0.3) return;
+      const node = this.graph.nearest(pk.origin, 3 * 32);
+      if (node < 0 || Number.isFinite(onFoot[node])) return;
+      if (!best || worth > best.appeal) best = { index, appeal: worth, goal: pk.origin };
+    });
+    const unreachable = best as { index: number; appeal: number; goal: Vec3 } | null;
+    if (unreachable) {
+      const plan = planPortals(world, this.graph, me, unreachable.goal, avoid);
+      const now = current ? pickupAppeal(pickupWorth(me, current), onFoot[this.graph.nearest(current.origin, 3 * 32)] ?? Infinity) : 0;
+      if (plan && pickupAppeal(unreachable.appeal, plan.ticks) > now) {
+        this.fetch = unreachable.index;
+        this.rethinkTick = world.tick + PORTAL_THINK_TICKS; // stick with it
+        return void (this.job = new PortalJob(plan, unreachable.goal, world.tick));
+      }
+    }
+
+    // Nothing it badly needs: now and then, go and see somewhere only portals reach.
+    const needy = !!current && (runningDry(me) || me.health < LOW_HEALTH);
+    if (needy || hash(this.id * 4099 + world.tick) >= EXPLORE_CHANCE) return;
+    const away: number[] = [];
+    onFoot.forEach((c, id) => !Number.isFinite(c) && away.push(id));
+    if (away.length === 0) return;
+    const pick = this.graph.nodes[away[Math.floor(hash(this.id * 31 + world.tick) * away.length)]].pos;
+    const plan = planPortals(world, this.graph, me, pick, avoid);
+    if (plan) this.job = new PortalJob(plan, pick, world.tick);
   }
 
   /** Which pickup to go for, reconsidered every RETHINK_TICKS or as soon as the current one is no use. */
@@ -335,6 +428,14 @@ export class Bot {
     const goalPitch = signedHash(this.id * 1009 + slot * 2 + 1) * this.skill.aimError * 0.6;
     this.errYaw += (goalYaw - this.errYaw) * 0.1;
     this.errPitch += (goalPitch - this.errPitch) * 0.1;
+  }
+
+  /** Like turn, but when lining up a portal shot it settles exactly on the aim (people steady themselves to place a portal). */
+  private turnPrecisely(yaw: number, pitch: number, settle: boolean) {
+    this.turn(yaw, pitch);
+    if (!settle) return;
+    if (Math.abs(wrap(yaw - this.yaw)) < 0.02) this.yaw = yaw;
+    if (Math.abs(pitch - this.pitch) < 0.02) this.pitch = pitch;
   }
 
   /** Turn towards a view direction, no faster than the skill allows. */
