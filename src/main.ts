@@ -7,7 +7,8 @@ import { Hud } from "./client/hud";
 import { LocalInput } from "./client/localInput";
 import { NetClient, serverAddress } from "./client/netClient";
 import { Predictor } from "./client/prediction";
-import { DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
+import { cleanName, DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
+import { GAME_PORT } from "./net/protocol";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
 import { lerp, vec3 } from "./math/vec3";
 import { applySnapshot } from "./net/snapshot";
@@ -35,15 +36,18 @@ async function start() {
   const settings = loadSettings();
   // ?join plays on the game server (npm run server) on the machine this page came from;
   // ?join=host or ?join=host:port another one. The server picks the map and the bots.
+  // A page served by the game server itself (npm run lan) joins without being asked; ?solo stops it.
+  const servedByGameServer = location.port === String(GAME_PORT);
+  const joining = (params.has("join") || servedByGameServer) && !params.has("solo");
   let net: NetClient | null = null;
   let localId = LOCAL_PLAYER;
   let serverMap: string | null = null;
-  if (params.has("join")) {
-    const url = serverAddress(params.get("join") ?? "");
+  const url = serverAddress(params.get("join") ?? (servedByGameServer ? location.host : ""));
+  if (joining) {
     status.textContent = `Joining ${url}…`;
     // ?lag=ms pretends the connection is that slow (round trip), to try out prediction at home.
     const lag = Math.max(0, Math.min(1000, Number(params.get("lag")) || 0));
-    const joined = await NetClient.connect(url, undefined, lag);
+    const joined = await NetClient.connect(url, settings.name || undefined, lag);
     net = joined.net;
     localId = joined.welcome.id;
     serverMap = joined.welcome.map;
@@ -146,6 +150,8 @@ async function start() {
   const difficultyButton = document.getElementById("difficulty") as HTMLButtonElement;
   const volumeSlider = document.getElementById("volume") as HTMLInputElement;
   const volumeValue = document.getElementById("volume-value")!;
+  const networkButton = document.getElementById("network") as HTMLButtonElement;
+  const nameBox = document.getElementById("player-name") as HTMLInputElement;
   sensSlider.min = String(MOUSE_SENSITIVITY_RANGE.min);
   sensSlider.max = String(MOUSE_SENSITIVITY_RANGE.max);
   sensSlider.step = String(MOUSE_SENSITIVITY_RANGE.step);
@@ -159,6 +165,8 @@ async function start() {
     mapButton.textContent = `Map: ${mapTitle}`;
     botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
     difficultyButton.textContent = `Difficulty: ${skillOverride === null ? difficultyOf(settings.difficulty).label : `custom ${skillOverride}`}`;
+    networkButton.textContent = net ? "Leave network game" : "Join network game";
+    if (nameBox !== document.activeElement) nameBox.value = settings.name;
     if (net) {
       // The server decides these in a network game.
       mapButton.textContent = `Map: ${mapTitle} (server)`;
@@ -226,6 +234,28 @@ async function start() {
     applySettings();
   };
   onClick(invertButton, toggleInvertLook);
+  // Join the game server (or leave it for a game on your own): a fresh page either way.
+  const toggleNetwork = () => {
+    const next = new URL(location.href);
+    if (net) {
+      next.searchParams.delete("join");
+      if (servedByGameServer) next.searchParams.set("solo", "");
+    } else {
+      next.searchParams.delete("solo");
+      if (!servedByGameServer) next.searchParams.set("join", "");
+    }
+    location.assign(next);
+  };
+  onClick(networkButton, toggleNetwork);
+  input.onToggleNetwork = toggleNetwork;
+  // Your name, for network games. Saved as you type; takes effect next time you join.
+  nameBox.addEventListener("input", () => {
+    settings.name = cleanName(nameBox.value);
+    saveSettings(settings);
+  });
+  nameBox.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") nameBox.blur();
+  });
   input.onToggleInvertLook = toggleInvertLook;
   sensSlider.addEventListener("input", () => {
     settings.mouseSensitivity = Number(sensSlider.value);
@@ -243,7 +273,9 @@ async function start() {
   if (net) {
     net.onClose = (reason) => {
       input.onDeactivate();
-      status.textContent = `${reason} Reload the page to join again.`;
+      status.textContent = `${reason} Trying to reconnect…`;
+      // Back in as soon as the server answers again (a restart, a Wi-Fi blip).
+      void NetClient.waitForServer(url).then(() => location.reload());
     };
   }
   // Building maps: on the dev server, check the map and list what's wrong in the menu.
@@ -326,7 +358,7 @@ async function start() {
     const time = now / 1000;
     renderer.render({ world, localId, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt, predictedFire: !!net }, frameEvents);
     if (firedNow) renderer.localShot();
-    hud.update(world, me, frameEvents, dt);
+    hud.update(world, me, frameEvents, dt, input.scoresHeld);
     // In a network game your shot's sound plays when you fire, not when the server's word comes back.
     const heard = net ? frameEvents.filter((e) => !(e.type === "fire" && e.player === localId)) : frameEvents;
     if (firedNow) heard.push({ type: "fire", player: localId, projectile: -1, origin: { ...eye }, dir: { x: 0, y: 0, z: 0 } });
@@ -400,6 +432,7 @@ function navLines(nav: NavGraph): [number[], number[]] {
 
 start().catch((err) => {
   console.error(err);
-  status.textContent = `Error: ${err instanceof Error ? err.message : String(err)}`;
+  const joining = new URLSearchParams(location.search).has("join");
+  status.textContent = `Error: ${err instanceof Error ? err.message : String(err)}` + (joining ? " (Remove ?join from the address to play on your own.)" : "");
   overlay.classList.remove("hidden");
 });

@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import WebSocket from "ws";
 import { startServer, type RunningServer } from "../server/gameServer";
 import { Bot } from "../src/bots/bot";
@@ -185,6 +188,33 @@ describe("game server", () => {
   }
   const isWelcome = (m: ServerMessage): m is Extract<ServerMessage, { t: "welcome" }> => m.t === "welcome";
   const isSnap = (m: ServerMessage): m is Extract<ServerMessage, { t: "snap" }> => m.t === "snap";
+
+  it("keeps names unique", async () => {
+    running = await startServer({ map: "test_box", bots: 0, skill: 0.5, port: 0 });
+    const a = connect(running.port);
+    const b = connect(running.port);
+    await Promise.all([a.opened, b.opened]);
+    a.socket.send(JSON.stringify({ t: "hello", name: "Grandpa" }));
+    await a.waitFor(isWelcome);
+    b.socket.send(JSON.stringify({ t: "hello", name: "  Grandpa  " }));
+    const wb = await b.waitFor(isWelcome);
+    expect(new Map(wb.names).get(wb.id)).toBe("Grandpa 2");
+    a.socket.close();
+    b.socket.close();
+  });
+
+  it("serves the built game on the same port, and nothing outside it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "skronk-dist-"));
+    writeFileSync(join(dir, "index.html"), "<!doctype html><title>Skronk</title>");
+    running = await startServer({ map: "test_box", bots: 0, skill: 0.5, port: 0, staticDir: dir });
+    const base = `http://localhost:${running.port}`;
+    const page = await fetch(`${base}/`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    expect(await page.text()).toContain("Skronk");
+    expect((await fetch(`${base}/missing.js`)).status).toBe(404);
+    expect((await fetch(`${base}/%2e%2e/%2e%2e/etc/passwd`)).status).toBe(404);
+  });
 
   it("lets two browsers join, and each sees the other move", async () => {
     running = await startServer({ map: "test_box", bots: 1, skill: 0.5, port: 0 });

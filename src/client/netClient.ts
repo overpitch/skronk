@@ -83,6 +83,21 @@ export class NetClient {
     });
   }
 
+  /** Resolves once a game server answers at `url`, trying every couple of seconds. */
+  static waitForServer(url: string): Promise<void> {
+    return new Promise((resolve) => {
+      const attempt = () => {
+        const probe = new WebSocket(url);
+        probe.addEventListener("open", () => {
+          probe.close();
+          resolve();
+        });
+        probe.addEventListener("error", () => setTimeout(attempt, 2000));
+      };
+      attempt();
+    });
+  }
+
   /** Sends this tick's controls; returns their seq. */
   sendCommand(cmd: PlayerCommand): number {
     const seq = this.seq++;

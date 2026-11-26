@@ -14,7 +14,8 @@
     "tb:install": "node tools/install-trenchbroom-config.mjs",
     "maps:check": "node tools/check-maps.mjs",
     "maps:starters": "node tools/make-portal-gym.mjs && node tools/make-arena.mjs",
-    "server": "tsx server/main.ts"
+    "server": "tsx server/main.ts",
+    "lan": "npm run build && tsx server/main.ts --serve"
   },
   "dependencies": {
     "three": "^0.181.2",

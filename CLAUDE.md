@@ -6,6 +6,7 @@ Browser arena shooter with personal portals. Full brief: [docs/brief.md](docs/br
 
 - `npm run dev`: dev server on http://localhost:5173 (`--host`, so other devices on the LAN, like the Xbox, can open it)
 - `npm test`: vitest (parser, brush geometry, collision, movement, portals, bots, map check, network)
+- `npm run lan -- --map arena --bots 2 --difficulty easy`: for a visit. Builds the game and serves it from the game server (port 5175): any device on the network, the Xbox included, opens `http://<mac>:5175/` and is straight in (a page from the game server joins by itself; `?solo` plays alone). macOS may ask to allow incoming connections for node the first time.
 - `npm run server -- --map arena --bots 2 --difficulty easy`: game server for network play (port 5175). Browsers join with `?join` on the dev server's address (`http://<mac>:5173/?join`); `?join=host[:port]` for another machine.
 - `npm run typecheck` / `npm run build`
 - `npm run textures`: regenerate the placeholder PNGs in `public/assets/textures/base/`

@@ -27,6 +27,8 @@ export interface Settings {
   volume: number;
   /** Map to play (file name without .map). */
   map: string;
+  /** Your name in network games; empty lets the server call you "Player N". */
+  name: string;
 }
 
 export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
@@ -34,7 +36,7 @@ export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
 const STORAGE_KEY = "skronk.settings";
 
 export function defaultSettings(): Settings {
-  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box" };
+  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box", name: "" };
 }
 
 export const difficultyOf = (id: Difficulty) => DIFFICULTIES.find((d) => d.id === id) ?? DIFFICULTIES[2];
@@ -52,11 +54,15 @@ export function loadSettings(): Settings {
     if (Number.isInteger(saved.bots) && saved.bots >= 0 && saved.bots <= MAX_BOTS) settings.bots = saved.bots;
     if (typeof saved.volume === "number" && saved.volume >= 0 && saved.volume <= 1) settings.volume = saved.volume;
     if (typeof saved.map === "string" && /^[\w-]+$/.test(saved.map)) settings.map = saved.map;
+    if (typeof saved.name === "string") settings.name = cleanName(saved.name);
   } catch {
     // Unreadable storage: keep defaults.
   }
   return settings;
 }
+
+/** A player name as shown to others: trimmed, at most 20 characters. */
+export const cleanName = (name: string) => name.replace(/\s+/g, " ").trim().slice(0, 20);
 
 export function saveSettings(settings: Settings) {
   try {

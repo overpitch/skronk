@@ -16,6 +16,8 @@ const PAD_X = 2;
 const PAD_Y = 3;
 const PAD_LB = 4;
 const PAD_RB = 5;
+const PAD_VIEW = 8;
+const PAD_UP = 12;
 const PAD_LEFT = 14;
 const PAD_RIGHT = 15;
 const PAD_LT = 6;
@@ -50,6 +52,8 @@ export class LocalInput {
   onChangeBots: (delta: number) => void = () => {};
   /** Gamepad D-pad left (-1) / right (+1) while the menu is open. */
   onChangeMap: (delta: number) => void = () => {};
+  /** Gamepad D-pad up while the menu is open: join or leave the network game. */
+  onToggleNetwork: () => void = () => {};
 
   private keys = new Set<string>();
   /**
@@ -62,6 +66,7 @@ export class LocalInput {
   private pad = { forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false };
   /** Left stick click toggles sprint on; it ends when you stop pushing forward. */
   private padSprint = false;
+  private padScores = false;
   private padPrev: boolean[] = [];
   /** For the debug HUD: what the browser reports, or null if no pad is visible yet. */
   padStatus: string | null = null;
@@ -72,7 +77,10 @@ export class LocalInput {
     if ("gamepadInputEmulation" in nav) nav.gamepadInputEmulation = "gamepad";
 
     window.addEventListener("keydown", (e) => {
+      // Typing in the menu's name box isn't playing.
+      if (e.target instanceof HTMLInputElement && e.target.type === "text") return;
       this.keys.add(e.code);
+      if (e.code === "Tab") e.preventDefault(); // held for the scoreboard, not moving focus
       if (e.code === "KeyE" && !e.repeat) this.portalPresses++;
       if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
     });
@@ -104,6 +112,11 @@ export class LocalInput {
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
+  /** Tab or the controller's View button held: show the scoreboard. */
+  get scoresHeld(): boolean {
+    return this.keys.has("Tab") || this.padScores;
+  }
+
   get pointerLocked() {
     return document.pointerLockElement === this.canvas;
   }
@@ -128,7 +141,7 @@ export class LocalInput {
     const pressed = (i: number) => !!pad.buttons[i]?.pressed;
     const justPressed = (i: number) => pressed(i) && !this.padPrev[i];
     // Menu buttons change settings; any other button starts play.
-    const menuButtons = [PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT];
+    const menuButtons = [PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT, PAD_UP, PAD_VIEW];
     const otherJustPressed = () => pad.buttons.some((_, i) => !menuButtons.includes(i) && justPressed(i));
     if (menuOpen) {
       if (justPressed(PAD_Y)) this.onToggleInvertLook();
@@ -137,6 +150,7 @@ export class LocalInput {
       else if (justPressed(PAD_RB)) this.onChangeBots(1);
       else if (justPressed(PAD_LEFT)) this.onChangeMap(-1);
       else if (justPressed(PAD_RIGHT)) this.onChangeMap(1);
+      else if (justPressed(PAD_UP)) this.onToggleNetwork();
       else if (otherJustPressed()) this.onActivate();
     } else if (justPressed(PAD_MENU)) {
       this.onDeactivate();
@@ -150,6 +164,7 @@ export class LocalInput {
     // Squared response curve: fine aim near centre, fast turns at the edge.
     const curve = (v: number) => Math.sign(v) * v * v;
     this.addLook(-curve(lx) * PAD_YAW_RATE * dt, -curve(ly) * PAD_PITCH_RATE * dt);
+    this.padScores = pressed(PAD_VIEW);
     if (-my < 0.2) this.padSprint = false;
     this.pad = {
       forward: -my,

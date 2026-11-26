@@ -230,6 +230,68 @@ body {
   letter-spacing: 0.1em;
 }
 
+/* Scores: held Tab / View, or while you're dead. */
+#scoreboard {
+  position: fixed;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 320px;
+  padding: 14px 22px;
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #fff;
+  background: rgba(10, 12, 18, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+#scoreboard.hidden {
+  display: none;
+}
+
+#scoreboard table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#scoreboard th {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+  text-align: right;
+  padding-bottom: 6px;
+}
+
+#scoreboard th:first-child,
+#scoreboard td:first-child {
+  text-align: left;
+}
+
+#scoreboard td {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 0 2px 18px;
+}
+
+#scoreboard tr.me td {
+  color: #7fe8ff;
+  font-weight: 600;
+}
+
+#overlay .setting.slider input[type="text"] {
+  width: 180px;
+  padding: 4px 8px;
+  font: inherit;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  cursor: text;
+}
+
 #hud {
   position: fixed;
   left: 24px;

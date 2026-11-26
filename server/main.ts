@@ -2,11 +2,14 @@
  * Skronk game server, from the command line:
  *
  *   npm run server -- --map arena --bots 2 --difficulty easy
+ *     Browsers join with ?join on the dev server's address: http://<this machine>:5173/?join
  *
- * Browsers on the same network join with ?join on the game's address (the dev
- * server's, for now): http://<this machine>:5173/?join
+ *   npm run lan -- --map arena --bots 2
+ *     Builds the game and serves it too (--serve): open http://<this machine>:5175/ on any
+ *     device on the same network, the Xbox included, and you're in. No dev server needed.
  */
 import { networkInterfaces } from "node:os";
+import { resolve } from "node:path";
 import { DIFFICULTIES } from "../src/client/settings";
 import { GAME_PORT } from "../src/net/protocol";
 import { MAX_PLAYERS, startServer } from "./gameServer";
@@ -20,13 +23,20 @@ const map = arg("map", "arena");
 const bots = Math.max(0, Math.min(MAX_PLAYERS - 1, Number(arg("bots", "0")) || 0));
 const difficulty = DIFFICULTIES.find((d) => d.id === arg("difficulty", "normal")) ?? DIFFICULTIES[2];
 const port = Number(arg("port", String(GAME_PORT)));
+const serve = process.argv.includes("--serve");
+const staticDir = serve ? resolve(import.meta.dirname, "../dist") : undefined;
 
-await startServer({ map, bots, skill: difficulty.skill, port, log: (line) => console.log(line) });
+await startServer({ map, bots, skill: difficulty.skill, port, staticDir, log: (line) => console.log(line) });
 
 const addresses = Object.values(networkInterfaces())
   .flat()
   .filter((a) => a && a.family === "IPv4" && !a.internal)
   .map((a) => a!.address);
 console.log(`Skronk server: map ${map}, ${bots} bots (${difficulty.label}), port ${port}`);
-for (const a of addresses) console.log(`  join from another device: http://${a}:5173/?join`);
-console.log(`  join from this machine:   http://localhost:5173/?join`);
+if (serve) {
+  for (const a of addresses) console.log(`  play from another device (Xbox too): http://${a}:${port}/`);
+  console.log(`  play on this machine:                http://localhost:${port}/`);
+} else {
+  for (const a of addresses) console.log(`  join from another device: http://${a}:5173/?join`);
+  console.log(`  join from this machine:   http://localhost:5173/?join`);
+}

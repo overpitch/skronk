@@ -22,6 +22,9 @@ export class Hud {
   private centre = el("centre-msg");
   private note = el("pickup-msg");
   private crosshair = el("crosshair");
+  private scoreboard = el("scoreboard");
+  private scoreRows = this.scoreboard.querySelector("tbody")!;
+  private scoreText = "";
   private crosshairColor = "";
   private markerTime = 0;
   private flashLevel = 0;
@@ -35,7 +38,8 @@ export class Hud {
     this.root.classList.toggle("hidden", !visible);
   }
 
-  update(world: World, me: PlayerState, events: readonly SimEvent[], dt: number) {
+  update(world: World, me: PlayerState, events: readonly SimEvent[], dt: number, showScores = false) {
+    this.updateScores(world, me, showScores || !me.alive);
     for (const e of events) {
       if (e.type === "hit" && e.attacker === me.id && e.victim !== me.id) this.showMarker(HIT_MARKER_SECONDS, false);
       if (e.type === "hit" && e.victim === me.id) this.flashLevel = Math.min(0.55, this.flashLevel + 0.22);
@@ -79,6 +83,28 @@ export class Hud {
     setText(this.frags, `FRAGS ${me.frags}`);
     this.health.classList.toggle("low", me.health <= 25);
     this.ammo.classList.toggle("low", me.ammo <= 20);
+  }
+
+  /** Everyone, most frags first (fewest deaths breaks ties); you highlighted. */
+  private updateScores(world: World, me: PlayerState, show: boolean) {
+    this.scoreboard.classList.toggle("hidden", !show);
+    if (!show) return;
+    const rows = [...world.players.values()].sort((a, b) => b.frags - a.frags || a.deaths - b.deaths || a.id - b.id);
+    const text = rows.map((p) => `${p.id}:${p.frags}:${p.deaths}:${this.nameOf(p.id)}`).join("|");
+    if (text === this.scoreText) return;
+    this.scoreText = text;
+    this.scoreRows.replaceChildren(
+      ...rows.map((p) => {
+        const tr = document.createElement("tr");
+        if (p.id === me.id) tr.className = "me";
+        for (const value of [p.id === me.id ? "You" : this.nameOf(p.id), String(p.frags), String(p.deaths)]) {
+          const td = document.createElement("td");
+          td.textContent = value;
+          tr.append(td);
+        }
+        return tr;
+      }),
+    );
   }
 
   private showMarker(seconds: number, kill: boolean) {

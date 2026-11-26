@@ -14,6 +14,14 @@
     <div id="debug"></div>
     <div id="centre-msg"></div>
     <div id="pickup-msg"></div>
+    <div id="scoreboard" class="hidden">
+      <table>
+        <thead>
+          <tr><th>Player</th><th>Frags</th><th>Deaths</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
     <div id="hud" class="hidden">
       <div class="vitals">
         <span class="label">HEALTH</span><span id="hud-health" class="value">100</span>
@@ -28,12 +36,17 @@
       <p class="keys">WASD move &middot; Shift+W run &middot; Space jump &middot; Mouse look &middot; Left click shoot &middot; Right click or E portal &middot; Esc release mouse</p>
       <p class="keys">Controller: click left stick to run &middot; right trigger shoots &middot; left trigger portal &middot; Menu button pauses</p>
       <div class="setting-row">
+        <button id="network" class="setting" type="button">Join network game</button>
         <button id="map-choice" class="setting" type="button">Map</button>
         <button id="bot-count" class="setting" type="button">Bots: 0</button>
         <button id="difficulty" class="setting" type="button">Difficulty: Normal</button>
         <button id="invert-look" class="setting" type="button" aria-pressed="false">Invert look: Off</button>
       </div>
-      <p class="keys">Click to change &middot; controller: D-pad map &middot; LB / RB bots &middot; X difficulty &middot; Y invert look</p>
+      <p class="keys">Click to change &middot; controller: D-pad up network &middot; D-pad left / right map &middot; LB / RB bots &middot; X difficulty &middot; Y invert look &middot; hold Tab or View for scores</p>
+      <label class="setting slider" for="player-name">
+        Name
+        <input id="player-name" type="text" maxlength="20" placeholder="Player" autocomplete="off" spellcheck="false" />
+      </label>
       <label class="setting slider" for="mouse-sens">
         Mouse sensitivity
         <input id="mouse-sens" type="range" min="0.2" max="4" step="0.05" value="1" />

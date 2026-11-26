@@ -4,8 +4,10 @@
  * TICK_RATE and sends every browser a snapshot. server/main.ts starts it from the
  * command line; tests start it in-process.
  */
+import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { extname, resolve, sep } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { Bot } from "../src/bots/bot";
 import { buildNavGraph } from "../src/bots/nav";
@@ -35,6 +37,11 @@ export interface ServerOptions {
   port: number;
   /** Logs joins and leaves; silent if absent. */
   log?: (line: string) => void;
+  /**
+   * Also serve the built game (the dist folder) over HTTP on the same port, so a
+   * browser can open http://<this machine>:<port>/ and be straight in the game.
+   */
+  staticDir?: string;
 }
 
 export interface RunningServer {
@@ -79,12 +86,19 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(msg));
   };
   const roster = (): [PlayerId, string][] => [...names];
+  /** Two people both called Grandpa become Grandpa and Grandpa 2. */
+  const uniqueName = (wanted: string) => {
+    const taken = new Set(names.values());
+    if (!taken.has(wanted)) return wanted;
+    for (let n = 2; ; n++) if (!taken.has(`${wanted} ${n}`)) return `${wanted} ${n}`;
+  };
   const broadcast = (msg: ServerMessage) => {
     const text = JSON.stringify(msg);
     for (const c of clients) if (c.socket.readyState === c.socket.OPEN) c.socket.send(text);
   };
 
-  const wss = new WebSocketServer({ port: options.port });
+  const http = createServer((req, res) => void serveStatic(options.staticDir, req, res));
+  const wss = new WebSocketServer({ server: http });
   wss.on("connection", (socket) => {
     let client: Client | null = null;
     socket.on("message", (data) => {
@@ -102,7 +116,7 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
         }
         const id = nextId++;
         world.addPlayer(id);
-        names.set(id, (msg.name ?? "").trim().slice(0, 20) || `Player ${clients.size + 1}`);
+        names.set(id, uniqueName((msg.name ?? "").replace(/\s+/g, " ").trim().slice(0, 20) || `Player ${clients.size + 1}`));
         client = { socket, id, queue: [], last: emptyCommand(), ack: -1, idle: 0 };
         clients.add(client);
         send(socket, { t: "welcome", id, map: options.map, names: roster() });
@@ -160,10 +174,10 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
   };
 
   return new Promise((resolveStart, rejectStart) => {
-    wss.once("error", rejectStart);
-    wss.once("listening", () => {
+    http.once("error", rejectStart);
+    http.listen(options.port, () => {
       loop();
-      const address = wss.address();
+      const address = http.address();
       resolveStart({
         world,
         port: typeof address === "object" && address ? address.port : options.port,
@@ -171,9 +185,45 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
           new Promise<void>((done) => {
             if (timer) clearTimeout(timer);
             for (const c of clients) c.socket.terminate();
-            wss.close(() => done());
+            wss.close(() => http.close(() => done()));
           }),
       });
     });
   });
+}
+
+const TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".json": "application/json",
+  ".map": "text/plain; charset=utf-8",
+  ".svg": "image/svg+xml",
+};
+
+/** Serves files from `dir` (the built game); anything outside it, or missing, is a 404. */
+async function serveStatic(dir: string | undefined, req: IncomingMessage, res: ServerResponse) {
+  const notFound = () => {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("Not found");
+  };
+  if (!dir || (req.method !== "GET" && req.method !== "HEAD")) return notFound();
+  let path: string;
+  try {
+    path = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);
+  } catch {
+    return notFound();
+  }
+  const root = resolve(dir);
+  const file = resolve(root, "." + (path.endsWith("/") ? path + "index.html" : path));
+  if (file !== root && !file.startsWith(root + sep)) return notFound();
+  try {
+    const body = await readFile(file);
+    res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream", "cache-control": "no-cache" });
+    res.end(req.method === "HEAD" ? undefined : body);
+  } catch {
+    notFound();
+  }
 }
