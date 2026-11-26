@@ -37,8 +37,11 @@ const KILL_Z_MARGIN = 2048;
 const POINT: Readonly<Vec3> = Object.freeze(vec3());
 /** Speed cap when coming out of a portal, so falling between a floor and ceiling pair can't run away. */
 const MAX_PORTAL_EXIT_SPEED = 2400;
-/** A shot between two facing portals could loop forever; it stops after this many hops in one tick. */
-const MAX_SHOT_HOPS_PER_TICK = 4;
+/**
+ * Safety net only: a shot travels 50 units a tick, so real portal spacing allows a hop or two
+ * per tick. If the hop maths ever failed to end, this stops one tick from hanging the game.
+ */
+const MAX_SHOT_HOPS_PER_TICK = 16;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
 
 export interface PlayerState extends MoveState {
@@ -434,6 +437,9 @@ export class World {
           copy(pr.prevOrigin, exit); // don't draw the tracer across the map
           throughPortalDir(pr.velocity, from, to, pr.velocity);
           pr.hops++;
+          // Each trip through a portal restarts the shot's lifetime: a shot looping between
+          // two facing portals stays as a standing hazard until it hits something or a portal moves.
+          pr.expireTick = this.tick + WEAPON.projectileLifeTicks;
           left *= 1 - portalT;
           this.events.push({ type: "shotThroughPortal", projectile: pr.id, from: from.id, to: to.id, pos, exit: clone(exit) });
           continue;

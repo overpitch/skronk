@@ -311,6 +311,31 @@ describe("shooting through portals", () => {
     expect(hit?.type === "hit" && hit.victim === other.id).toBe(true);
   });
 
+  it("keeps a shot looping between two facing portals as a standing hazard", () => {
+    const { world, p } = setup();
+    shoot(world, p, 0); // east wall, y 0
+    shoot(world, p, Math.PI); // west wall, y 0: straight across from it
+    place(p, 400, 0);
+    world.step(new Map([[p.id, { ...emptyCommand(), yaw: 0, fire: true }]]));
+    place(p, 0, 300); // step out of the line before it comes round
+    let hops = 0;
+    for (let i = 0; i < 10 * 60; i++) {
+      world.step(new Map([[p.id, emptyCommand()]]));
+      hops += world.events.filter((e) => e.type === "shotThroughPortal").length;
+    }
+    expect(world.projectiles).toHaveLength(1); // still going after 10 s, five lifetimes
+    expect(hops).toBeGreaterThan(20);
+    // Walk into its path and it hits you.
+    place(p, 0, 0);
+    let hit = false;
+    for (let i = 0; i < 60 && !hit; i++) {
+      world.step(new Map([[p.id, emptyCommand()]]));
+      hit = world.events.some((e) => e.type === "hit" && e.victim === p.id);
+    }
+    expect(hit).toBe(true);
+    expect(world.projectiles).toHaveLength(0);
+  });
+
   it("hits the wall when the portal isn't linked", () => {
     const { world, p } = setup();
     shoot(world, p, yawToEast(200));
