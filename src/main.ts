@@ -1,5 +1,5 @@
 import { buildNavGraph, type NavGraph } from "./bots/nav";
-import { RoamBot } from "./bots/roamBot";
+import { Bot, DEFAULT_BOT_SKILL } from "./bots/bot";
 import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
@@ -27,8 +27,10 @@ const debug = document.getElementById("debug")!;
 async function start() {
   const params = new URLSearchParams(location.search);
   const mapName = params.get("map") ?? "test_box";
-  // ?bots=N bots that roam the map (milestone 4, no fighting yet); ?navdebug draws their walk graph.
+  // ?bots=N bots that roam and fight; ?botskill=0..1 how sharp they are; ?navdebug draws their walk graph.
   const botCount = Math.max(0, Math.min(8, Number(params.get("bots") ?? 0) || 0));
+  const skillParam = Number(params.get("botskill"));
+  const botSkillLevel = params.has("botskill") && Number.isFinite(skillParam) ? Math.max(0, Math.min(1, skillParam)) : DEFAULT_BOT_SKILL;
   const navDebug = params.has("navdebug");
   // ?dummies=N practice targets (default 1, or 0 when there are bots); ?dummyfire makes them shoot back;
   // ?dummyspeed=0..1 sets how fast they strafe (0 stands still).
@@ -59,7 +61,7 @@ async function start() {
   for (let i = 0; i < botCount; i++) {
     const id = LOCAL_PLAYER + 1 + dummyCount + i;
     world.addPlayer(id);
-    bots.push(new RoamBot(id, nav!));
+    bots.push(new Bot(id, nav!, botSkillLevel));
     names.set(id, `Bot ${i + 1}`);
   }
   const nameOf = (id: PlayerId) => names.get(id) ?? `Player ${id}`;

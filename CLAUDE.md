@@ -17,7 +17,7 @@ Test in desktop Chrome only (the built-in browser pane is Chromium too). Safari 
 
 Load a map with `?map=<name>` (file in `public/assets/maps/<name>.map`). Default: `test_box`.
 Practice targets: `?dummies=N` (default 1, or 0 when there are bots); add `?dummyfire` to make them shoot back, `?dummyspeed=0..1` for strafe speed (default 0.35, 0 stands still).
-Bots: `?bots=N` roaming bots (milestone 4, no fighting yet); `?navdebug` draws their walk graph (green walk, yellow jump, orange drop). The walk graph is built from the level at load (`src/bots/nav.ts`), no waypoints to place.
+Bots: `?bots=N` bots that roam and fight (milestone 4); `?botskill=0..1` how sharp they are (default 0.5); `?navdebug` draws their walk graph (green walk, yellow jump, orange drop). The walk graph is built from the level at load (`src/bots/nav.ts`), no waypoints to place.
 
 ## Architecture rules
 

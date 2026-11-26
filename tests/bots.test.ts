@@ -1,13 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { vec3 } from "../src/math/vec3";
+import { set, vec3 } from "../src/math/vec3";
+import { Bot, botSkill } from "../src/bots/bot";
+import type { PlayerCommand } from "../src/sim/command";
+import type { SimEvent } from "../src/sim/events";
 import { buildNavGraph } from "../src/bots/nav";
-import { RoamBot } from "../src/bots/roamBot";
+import { Navigator } from "../src/bots/navigator";
+import { emptyCommand } from "../src/sim/command";
 import { World } from "../src/sim/world";
 import { loadTestMap } from "./helpers";
 
 const level = loadTestMap();
+const FLOOR = 24.03125;
+const LEDGE = 128 + 24.03125;
 const nav = buildNavGraph(level, new World(level).collision);
 const at = (x: number, y: number, z: number) => nav.nearest(vec3(x, y, z));
+/** Just the getting-around part: roam and look where you're going. */
+class Roamer {
+  private nav: Navigator;
+  constructor(readonly id: number) {
+    this.nav = new Navigator(id, nav);
+  }
+  command(world: World) {
+    const me = world.players.get(this.id)!;
+    const steer = this.nav.steer(world, me);
+    const cmd = { ...emptyCommand(), yaw: me.yaw, jump: steer.jump };
+    if (steer.dir) {
+      cmd.yaw = Math.atan2(steer.dir.y, steer.dir.x);
+      cmd.forward = 1;
+    }
+    return cmd;
+  }
+}
+
 const heights = (path: number[] | null) => [...new Set((path ?? []).map((i) => Math.round(nav.nodes[i].pos.z)))];
 
 describe("walk graph", () => {
@@ -42,7 +66,7 @@ describe("roaming bots", () => {
     const world = new World(level);
     const bots = [2, 3].map((id) => {
       world.addPlayer(id);
-      return new RoamBot(id, nav);
+      return new Roamer(id);
     });
     const places = new Set<string>();
     let maxZ = 0;
@@ -63,5 +87,127 @@ describe("roaming bots", () => {
     expect(places.size).toBeGreaterThan(60);
     expect(maxZ).toBeGreaterThan(140); // the ledge
     expect(longestStill).toBeLessThan(30);
+  });
+});
+
+describe("fighting bots", () => {
+  /** A bot (id 2) and a target (id 3) that does nothing unless told. */
+  function duel(botAt: [number, number, number], botYaw: number, targetAt: [number, number, number], skill = 0.5) {
+    const world = new World(level);
+    const bot = new Bot(2, nav, skill);
+    const b = world.addPlayer(2);
+    const t = world.addPlayer(3);
+    set(b.origin, ...botAt);
+    set(b.prevOrigin, ...botAt);
+    b.yaw = botYaw;
+    set(t.origin, ...targetAt);
+    set(t.prevOrigin, ...targetAt);
+    return { world, bot, b, t };
+  }
+  const run = (world: World, bot: Bot, ticks: number, target: () => PlayerCommand = emptyCommand) => {
+    const events: SimEvent[] = [];
+    for (let i = 0; i < ticks; i++) {
+      world.step(new Map([[2, bot.command(world)], [3, target()]]));
+      events.push(...world.events);
+    }
+    return events;
+  };
+
+  it("spots an enemy in front, waits its reaction time, then shoots it down", () => {
+    const { world, bot, t } = duel([-300, -300, FLOOR], Math.PI / 4, [200, 200, FLOOR]);
+    const events: SimEvent[] = [];
+    let firstShot = -1;
+    for (let i = 0; i < 8 * 60 && t.alive; i++) {
+      events.push(...run(world, bot, 1));
+      if (firstShot < 0 && events.some((e) => e.type === "fire")) firstShot = i;
+    }
+    expect(firstShot).toBeGreaterThanOrEqual(botSkill(0.5).reactionTicks - 1);
+    expect(events.some((e) => e.type === "kill" && e.attacker === 2 && e.victim === 3)).toBe(true);
+  });
+
+  it("is sharper at higher skill", () => {
+    const killTime = (skill: number) => {
+      const { world, bot, t } = duel([-300, -300, FLOOR], Math.PI / 4, [200, 200, FLOOR], skill);
+      let i = 0;
+      while (t.alive && i < 20 * 60) {
+        run(world, bot, 1);
+        i++;
+      }
+      return i;
+    };
+    expect(killTime(1)).toBeLessThan(killTime(0));
+  });
+
+  it("turns on whoever shoots it from behind", () => {
+    // Bot faces away (+x); the target, behind it, shoots it in the back.
+    const { world, bot, b } = duel([0, 0, FLOOR], 0, [-400, 0, FLOOR]);
+    let hitBack = false;
+    for (let i = 0; i < 4 * 60 && !hitBack; i++) {
+      for (const e of run(world, bot, 1, () => ({ ...emptyCommand(), yaw: 0, fire: i % 7 === 0 }))) {
+        if (e.type === "hit" && e.attacker === 2) hitBack = true;
+      }
+    }
+    expect(hitBack).toBe(true);
+    expect(Math.abs(Math.abs(b.yaw) - Math.PI)).toBeLessThan(0.3); // facing back towards -x
+  });
+
+  it("chases to where it last saw an enemy who ducked out of sight", () => {
+    const { world, bot, b, t } = duel([-300, -300, FLOOR], Math.PI / 4, [0, 0, FLOOR]);
+    run(world, bot, 20); // seen
+    // The target slips behind the pillar (north side of it), out of view.
+    set(t.origin, -200, 320, FLOOR);
+    set(t.prevOrigin, -200, 320, FLOOR);
+    const start = Math.hypot(b.origin.x, b.origin.y);
+    run(world, bot, 60);
+    expect(Math.hypot(b.origin.x, b.origin.y)).toBeLessThan(start - 100); // ran towards (0, 0)
+  });
+
+  it("doesn't strafe off the ledge while fighting someone below (walking down the ramp is fine)", () => {
+    // Target out on the floor, in clear view of the ledge (not behind the pillar).
+    const { world, bot, b } = duel([-416, 400, LEDGE], Math.atan2(-700, 316), [-100, -300, FLOOR]);
+    let shots = 0;
+    // Every time it leaves the ground, how far below the take-off point it lands.
+    let takeoff: number | null = null;
+    let biggestDrop = 0;
+    for (let i = 0; i < 5 * 60; i++) {
+      shots += run(world, bot, 1).filter((e) => e.type === "fire").length;
+      if (!b.onGround && takeoff === null) takeoff = b.prevOrigin.z;
+      if (b.onGround && takeoff !== null) {
+        biggestDrop = Math.max(biggestDrop, takeoff - b.origin.z);
+        takeoff = null;
+      }
+    }
+    expect(shots).toBeGreaterThan(10); // it was fighting, not roaming
+    expect(biggestDrop).toBeLessThan(48);
+  });
+
+  it("never fires without a clear line to someone", () => {
+    const world = new World(level);
+    const bots = [2, 3, 4].map((id) => {
+      world.addPlayer(id);
+      return new Bot(id, nav, 0.5);
+    });
+    let fires = 0;
+    let blind = 0;
+    let kills = 0;
+    for (let i = 0; i < 60 * 60; i++) {
+      world.step(new Map(bots.map((x) => [x.id, x.command(world)])));
+      for (const e of world.events) {
+        if (e.type === "kill") kills++;
+        if (e.type !== "fire") continue;
+        fires++;
+        const others = [...world.players.values()].filter((p) => p.id !== e.player && p.alive);
+        // Chest or head in clear view of the shooter's eye.
+        const seen = others.some((p) =>
+          [4, 22].some((h) => world.collision.traceBox(e.origin, vec3(p.origin.x, p.origin.y, p.origin.z + h), vec3(), vec3()).fraction === 1),
+        );
+        if (!seen) blind++;
+      }
+    }
+    expect(fires).toBeGreaterThan(50);
+    expect(kills).toBeGreaterThan(3);
+    // A bot decides from where it stands at the start of a tick; the shot leaves from where it
+    // is after moving that tick, so now and then it has just stepped behind cover.
+    expect(blind).toBeLessThan(fires * 0.02);
   });
 });

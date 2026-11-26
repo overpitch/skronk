@@ -1,17 +1,18 @@
 /**
- * Milestone 4, step 1: a bot that gets around. It picks somewhere on the walk
- * graph, plans a route there and runs it, then picks somewhere else. No
- * fighting yet. Like every participant it only produces PlayerCommands.
+ * Gets a bot around on the walk graph: plans a route to a goal (a place, or a
+ * random spot when roaming) and says which way to move each tick. It doesn't
+ * decide where to look or when to shoot; the bot's brain does, and turns the
+ * direction into a command.
  *
  * Following a route: steer at the next node (or further along when the way is
  * straight and clear), jump when blocked (the same rule the graph was built
  * with), and plan again when knocked off course, sent through a portal, or stuck.
  */
 import { vec3, type Vec3 } from "../math/vec3";
-import { emptyCommand, type PlayerCommand } from "../sim/command";
 import { PLAYER_MAXS, PLAYER_MINS } from "../sim/movement";
 import type { PlayerId, PlayerState, World } from "../sim/world";
 import { closeTo, NAV_REACH_Z, NAV_SPACING, type NavGraph } from "./nav";
+import { hash } from "./random";
 
 /** Further than this beyond the length of the current hop (a fall, a portal, a knock): plan again. */
 const OFF_ROUTE = 3 * NAV_SPACING;
@@ -22,16 +23,15 @@ const LOOKAHEAD = 5;
 const STALL_SPEED = 40;
 const STALL_TICKS = 2;
 
-/** Small deterministic hash, so bots vary without Math.random. */
-function hash(n: number): number {
-  let x = Math.imul(n | 0, 0x9e3779b1);
-  x ^= x >>> 15;
-  x = Math.imul(x, 0x85ebca6b);
-  x ^= x >>> 13;
-  return (x >>> 0) / 4294967296; // 0..1
+export interface Steer {
+  /** Horizontal unit direction to move in, or null to stand. */
+  dir: { x: number; y: number } | null;
+  jump: boolean;
 }
 
-export class RoamBot {
+const STAND: Steer = { dir: null, jump: false };
+
+export class Navigator {
   private route: number[] = [];
   private step = 0;
   private picks = 0;
@@ -40,6 +40,10 @@ export class RoamBot {
   private sinceBetter = 0;
   private failures = 0;
   private aim: Vec3 | null = null;
+  /** Where we're heading, or null to roam. */
+  private goal: Vec3 | null = null;
+  /** No route to the goal: stand until given another. */
+  private noRoute = false;
 
   constructor(
     readonly id: PlayerId,
@@ -51,16 +55,35 @@ export class RoamBot {
     return this.route.slice(this.step);
   }
 
-  command(world: World): PlayerCommand {
-    const me = world.players.get(this.id);
-    const cmd = emptyCommand();
-    if (!me || !me.alive) {
-      this.route = [];
-      return cmd;
-    }
-    cmd.yaw = me.yaw;
+  /** Head for a place (planned to the nearest walkable spot), or null to roam. */
+  goTo(pos: Vec3 | null) {
+    const same = pos && this.goal && Math.hypot(pos.x - this.goal.x, pos.y - this.goal.y, pos.z - this.goal.z) < NAV_SPACING;
+    if (same || (!pos && !this.goal)) return;
+    this.goal = pos ? { ...pos } : null;
+    this.route = [];
+    this.step = 0;
+    this.noRoute = false;
+  }
 
-    if (this.step >= this.route.length) this.plan(me, true);
+  /** The goal set with goTo can't be reached from here. */
+  get unreachable(): boolean {
+    return this.noRoute;
+  }
+
+  /** Arrived at the goal set with goTo (always false while roaming). */
+  get arrived(): boolean {
+    return this.goal !== null && this.route.length > 0 && this.step >= this.route.length;
+  }
+
+  /** Forget the route (after dying, say). */
+  reset() {
+    this.route = [];
+    this.step = 0;
+  }
+
+  steer(world: World, me: PlayerState): Steer {
+    if (this.noRoute) return STAND;
+    if (this.step >= this.route.length && !this.arrived) this.plan(me, true);
     // Reaching any node a little way ahead (it runs straight past the ones in between) moves us on.
     for (let k = Math.min(this.route.length - 1, this.step + LOOKAHEAD); k >= this.step; k--) {
       if (closeTo(me.origin, this.node(k))) {
@@ -68,7 +91,11 @@ export class RoamBot {
         break;
       }
     }
-    if (this.step >= this.route.length) return cmd; // arrived: a new goal next tick
+    if (this.step >= this.route.length) {
+      // Arrived: when roaming, a new goal next tick.
+      if (!this.goal) this.route = [];
+      return STAND;
+    }
 
     const next = this.node(this.step);
     const aim = this.steerTarget(world, me);
@@ -85,7 +112,7 @@ export class RoamBot {
     const toNext = Math.hypot(next.x - me.origin.x, next.y - me.origin.y) + Math.abs(next.z - me.origin.z);
     if (toNext > hop + OFF_ROUTE) {
       this.plan(me, false);
-      return cmd;
+      return STAND;
     }
     if (d < this.best - 1) {
       this.best = d;
@@ -93,16 +120,16 @@ export class RoamBot {
     } else if (++this.sinceBetter > STUCK_TICKS) {
       // Can't get there from here: another route, and after a few tries, another goal.
       this.plan(me, ++this.failures >= 3);
-      return cmd;
+      return STAND;
     }
 
-    cmd.yaw = Math.atan2(aim.y - me.origin.y, aim.x - me.origin.x);
-    cmd.forward = 1;
+    const dx = aim.x - me.origin.x;
+    const dy = aim.y - me.origin.y;
+    const len = Math.hypot(dx, dy) || 1;
     // Blocked while on the ground (a low wall, a ledge to climb): jump, like the graph's test walks.
     const speed = Math.hypot(me.velocity.x, me.velocity.y);
     this.stall = me.onGround && speed < STALL_SPEED ? this.stall + 1 : 0;
-    cmd.jump = this.stall >= STALL_TICKS && next.z > me.origin.z - NAV_REACH_Z;
-    return cmd;
+    return { dir: { x: dx / len, y: dy / len }, jump: this.stall >= STALL_TICKS && next.z > me.origin.z - NAV_REACH_Z };
   }
 
   private node(i: number): Vec3 {
@@ -116,10 +143,11 @@ export class RoamBot {
     this.failures = 0;
   }
 
-  /** New route from where we are: to a fresh goal, or the same one. */
+  /** New route from where we are: to the goal, or when roaming a fresh spot (or the same one). */
   private plan(me: PlayerState, newGoal: boolean) {
     const start = this.nav.nearest(me.origin);
-    const goal = newGoal || this.route.length === 0 ? -1 : this.route[this.route.length - 1];
+    let goal = newGoal || this.route.length === 0 ? -1 : this.route[this.route.length - 1];
+    if (this.goal) goal = this.nav.nearest(this.goal);
     this.route = [];
     this.step = 0;
     this.best = Infinity;
@@ -133,6 +161,10 @@ export class RoamBot {
       }
     }
     this.failures = 0;
+    if (this.goal) {
+      this.noRoute = true; // can't get there: stand, and the brain will pick something else
+      return;
+    }
     for (let tries = 0; tries < 8; tries++) {
       const pick = Math.floor(hash(this.id * 7919 + this.picks++) * this.nav.nodes.length);
       const path = this.nav.findPath(start, pick);
