@@ -53,6 +53,7 @@ export class GameRenderer {
   private punchYaw = 0;
   /** Current speed FOV kick in degrees, eased. */
   private fovKick = 0;
+  private debugLines: THREE.LineSegments | null = null;
   private forward = new THREE.Vector3();
   private right = new THREE.Vector3();
   private up = new THREE.Vector3();
@@ -230,6 +231,19 @@ export class GameRenderer {
     this.renderer.render(this.scene, this.camera);
     this.renderer.clearDepth();
     this.renderer.render(this.viewModel.scene, this.viewModel.camera);
+  }
+
+  /** Debug overlay: coloured line segments (pairs of points), drawn through walls. Replaces any earlier set. */
+  setDebugLines(positions: number[], colors: number[]) {
+    this.debugLines?.geometry.dispose();
+    if (this.debugLines) this.scene.remove(this.debugLines);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    const mat = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7, depthTest: false });
+    this.debugLines = new THREE.LineSegments(geo, mat);
+    this.debugLines.renderOrder = 10;
+    this.scene.add(this.debugLines);
   }
 
   /** World position of the gun muzzle for the current view. */

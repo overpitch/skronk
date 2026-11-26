@@ -1,3 +1,5 @@
+import { buildNavGraph, type NavGraph } from "./bots/nav";
+import { RoamBot } from "./bots/roamBot";
 import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
@@ -25,9 +27,12 @@ const debug = document.getElementById("debug")!;
 async function start() {
   const params = new URLSearchParams(location.search);
   const mapName = params.get("map") ?? "test_box";
-  // ?dummies=N practice targets (default 1); ?dummyfire makes them shoot back;
+  // ?bots=N bots that roam the map (milestone 4, no fighting yet); ?navdebug draws their walk graph.
+  const botCount = Math.max(0, Math.min(8, Number(params.get("bots") ?? 0) || 0));
+  const navDebug = params.has("navdebug");
+  // ?dummies=N practice targets (default 1, or 0 when there are bots); ?dummyfire makes them shoot back;
   // ?dummyspeed=0..1 sets how fast they strafe (0 stands still).
-  const dummyCount = Math.max(0, Math.min(8, Number(params.get("dummies") ?? 1) || 0));
+  const dummyCount = Math.max(0, Math.min(8, Number(params.get("dummies") ?? (botCount > 0 ? 0 : 1)) || 0));
   const dummiesShoot = params.has("dummyfire");
   const speedParam = Number(params.get("dummyspeed"));
   const dummySpeed = params.has("dummyspeed") && Number.isFinite(speedParam) ? Math.max(0, Math.min(1, speedParam)) : DUMMY_DEFAULT_SPEED;
@@ -37,15 +42,30 @@ async function start() {
 
   const world = new World(level);
   const me = world.addPlayer(LOCAL_PLAYER);
-  const bots: TargetDummy[] = [];
+  const bots: { id: PlayerId; command(world: World): PlayerCommand }[] = [];
+  const names = new Map<PlayerId, string>([[LOCAL_PLAYER, "yourself"]]);
   for (let i = 0; i < dummyCount; i++) {
     const id = LOCAL_PLAYER + 1 + i;
     world.addPlayer(id);
     bots.push(new TargetDummy(id, dummiesShoot, dummySpeed));
+    names.set(id, dummyCount > 1 ? `Dummy ${i + 1}` : "the dummy");
   }
-  const nameOf = (id: PlayerId) => (id === LOCAL_PLAYER ? "yourself" : dummyCount > 1 ? `Dummy ${id - LOCAL_PLAYER}` : "the dummy");
+  let nav: NavGraph | null = null;
+  if (botCount > 0 || navDebug) {
+    status.textContent = `Mapping ${mapName} for bots…`;
+    await new Promise((r) => setTimeout(r)); // let the status show before the build blocks
+    nav = buildNavGraph(level, world.collision);
+  }
+  for (let i = 0; i < botCount; i++) {
+    const id = LOCAL_PLAYER + 1 + dummyCount + i;
+    world.addPlayer(id);
+    bots.push(new RoamBot(id, nav!));
+    names.set(id, `Bot ${i + 1}`);
+  }
+  const nameOf = (id: PlayerId) => names.get(id) ?? `Player ${id}`;
   const renderer = new GameRenderer(canvas, `${assets}/textures`);
   renderer.loadLevel(level);
+  if (nav && navDebug) renderer.setDebugLines(...navLines(nav));
   window.addEventListener("resize", () => renderer.resize());
 
   const input = new LocalInput(canvas);
@@ -166,12 +186,29 @@ async function start() {
     debug.textContent =
       `${fps} fps  ${speed} ups  ${me.onGround ? "ground" : "air"}\n` +
       `${me.origin.x.toFixed(0)} ${me.origin.y.toFixed(0)} ${me.origin.z.toFixed(0)}  tick ${world.tick}\n` +
-      `controller: ${input.padStatus ?? "none (press a button to connect)"}`;
+      `controller: ${input.padStatus ?? "none (press a button to connect)"}` +
+      (nav ? `\nnav: ${nav.nodes.length} nodes, ${nav.edgeCount} links` : "");
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
 
-  if (import.meta.env.DEV) Object.assign(window, { skronk: { world, input, renderer, level, bots } });
+  if (import.meta.env.DEV) Object.assign(window, { skronk: { world, input, renderer, level, bots, nav } });
+}
+
+/** The walk graph as line segments at foot level: walks green, jumps yellow, drops orange. */
+function navLines(nav: NavGraph): [number[], number[]] {
+  const pos: number[] = [];
+  const col: number[] = [];
+  const feet = -22; // node positions are player origins; draw just above the floor
+  for (const n of nav.nodes) {
+    for (const e of n.edges) {
+      const t = nav.nodes[e.to].pos;
+      pos.push(n.pos.x, n.pos.y, n.pos.z + feet, t.x, t.y, t.z + feet);
+      const c = e.jump ? [1, 0.85, 0.2] : e.drop ? [1, 0.5, 0.15] : [0.25, 0.9, 0.45];
+      col.push(...c, ...c);
+    }
+  }
+  return [pos, col];
 }
 
 start().catch((err) => {

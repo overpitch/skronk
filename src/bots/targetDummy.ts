@@ -18,9 +18,9 @@ const BURST_LENGTH = 24;
 
 /** Small deterministic hash, so each cycle varies without Math.random. */
 function hash(n: number): number {
-  let x = (n * 2654435761) >>> 0;
+  let x = Math.imul(n | 0, 0x9e3779b1);
   x ^= x >>> 15;
-  return (x % 1000) / 1000;
+  return ((x >>> 0) % 1000) / 1000;
 }
 
 export class TargetDummy {
