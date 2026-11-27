@@ -17,11 +17,16 @@
  * - Places portals of its own (portalPlanner.ts, portalJob.ts) to reach a pickup
  *   it can't walk to, to cut a long trip short, or now and then just to visit
  *   somewhere only portals reach.
+ * - Fights with portals: sees (and shoots) enemies through an open pair it's
+ *   looking into, follows someone it saw go through one, and when hurt slips away
+ *   through a pair that leads away from the enemy. (Normal and Hard: lower levels
+ *   don't think of portals in a fight, though they still follow you through.)
  *
  * One skill number (0..1) sets how quick and accurate it is. Like every
  * participant it only produces PlayerCommands; it reads the world, never writes it.
  */
-import { vec3, type Vec3 } from "../math/vec3";
+import { addScaled, sub, vec3, type Vec3 } from "../math/vec3";
+import { segmentIntoPortal, throughPortalPoint, type Portal } from "../sim/portals";
 import { emptyCommand, type PlayerCommand } from "../sim/command";
 import { EYE_HEIGHT, MOVE, PLAYER_MAXS, PLAYER_MINS } from "../sim/movement";
 import { TICK_DT, TICK_RATE } from "../sim/tick";
@@ -63,6 +68,10 @@ export interface BotSkill {
   standChance: number;
   /** Ticks before it notices being shot from somewhere it isn't looking. */
   noticeHitTicks: number;
+  /** Sees enemies through an open portal pair it's looking into, and shoots them through it. */
+  portalSight: boolean;
+  /** When hurt in a fight, slips away through an open pair that leads away from the enemy. */
+  portalEscape: boolean;
 }
 
 export const DEFAULT_BOT_SKILL = 0.5;
@@ -95,6 +104,8 @@ export function botSkill(level: number): BotSkill {
     strafeSpeed: mix(0.35, 1, k),
     standChance: mix(0.5, 0.05, s),
     noticeHitTicks: Math.round(mix(50, 0, s)),
+    portalSight: s >= 0.4,
+    portalEscape: s >= 0.4,
     lead: mix(0.2, 0.9, s),
     fovHalf: (mix(55, 80, s) * Math.PI) / 180,
   };
@@ -114,6 +125,13 @@ const LONG_TRIP_TICKS = 5 * TICK_RATE;
 const EXPLORE_CHANCE = 0.45;
 /** Spots that let it down are avoided this long. */
 const FAILED_SPOT_TICKS = 30 * TICK_RATE;
+/** Farthest it notices someone through a portal. */
+const PORTAL_SIGHT_RANGE = 2000;
+/** An escape portal has to be this close, and lead at least this far from the enemy. */
+const ESCAPE_REACH = 500;
+const ESCAPE_DISTANCE = 700;
+/** After slipping away through a portal, it doesn't try again for this long (no ping-pong). */
+const ESCAPE_COOLDOWN_TICKS = 5 * TICK_RATE;
 /**
  * Before strafing a way, check for ground under a spot ahead: further ahead the faster
  * it's going (it takes a while to stop). A drop deeper than SAFE_DROP is off limits.
@@ -163,6 +181,10 @@ export class Bot {
   private shotBy: { id: PlayerId; at: number } | null = null;
   /** Fighting this tick (strafes at its skill's speed). */
   private dodging = false;
+  /** The target is seen through this portal pair (into `from`, out of `to`), or null for directly. */
+  private via: { from: Portal; to: Portal } | null = null;
+  /** Last time it went through a portal to get away. */
+  private escapedTick = -Infinity;
   /** Placing a pair of its own portals to get somewhere (null when not). */
   private job: PortalJob | null = null;
   private portalThinkTick = 0;
@@ -182,6 +204,11 @@ export class Bot {
   /** Change how sharp it is, mid-game (the menu's difficulty). */
   setSkill(level: number) {
     this.skill = botSkill(level);
+  }
+
+  /** Where it last saw (or knows) its target is, for the debug view and tests. */
+  get lastSeenAt(): Readonly<Vec3> | null {
+    return this.lastSeen;
   }
 
   /** The route it's following, for the debug view. */
@@ -222,7 +249,11 @@ export class Bot {
     let lookYaw = this.yaw;
     let lookPitch = 0;
     let steer: Steer;
-    const range = target ? Math.hypot(target.origin.x - me.origin.x, target.origin.y - me.origin.y, target.origin.z - me.origin.z) : Infinity;
+    // Seen through a portal: where it appears to be, on this side of the opening (the same distance away as the way through).
+    const via = this.targetVisible ? this.via : null;
+    const apparent = (p: Vec3) => (via ? throughPortalPoint(p, via.to, via.from) : p);
+    const seenAt = target ? apparent(target.origin) : null;
+    const range = seenAt ? Math.hypot(seenAt.x - me.origin.x, seenAt.y - me.origin.y, seenAt.z - me.origin.z) : Infinity;
     const fighting = !!target && this.targetVisible && (hasGunAmmo(me) || range < BRAWL_DISTANCE);
     this.readyWeapon(world, me, fighting ? range : ROAM_DISTANCE);
     if (this.wantWeapon >= 0 && this.wantWeapon !== me.weapon) cmd.weapon = this.wantWeapon + 1;
@@ -231,15 +262,22 @@ export class Bot {
 
     if (target && fighting) {
       // Fight: aim where it will be (partly), plus wander. Rockets go at the feet of someone on the ground.
-      const dx = target.origin.x - eye.x;
-      const dy = target.origin.y - eye.y;
-      const feet = this.skill.feetRockets && spec.splash !== null && target.onGround && range > 200;
+      // Through a portal: aim where they appear in the opening; the shot comes out of the other end at them.
+      const feet = this.skill.feetRockets && !via && spec.splash !== null && target.onGround && range > 200;
       const aimHeight = feet ? PLAYER_MINS.z + 4 : this.aimHeight;
-      const flight = spec.shot === "projectile" ? Math.hypot(dx, dy, target.origin.z + aimHeight - eye.z) / spec.speed : 0;
+      const centre = apparent(vec3(target.origin.x, target.origin.y, target.origin.z + aimHeight));
+      const flight = spec.shot === "projectile" ? Math.hypot(centre.x - eye.x, centre.y - eye.y, centre.z - eye.z) / spec.speed : 0;
       const lead = flight * this.skill.lead;
-      const ax = target.origin.x + target.velocity.x * lead - eye.x;
-      const ay = target.origin.y + target.velocity.y * lead - eye.y;
-      const az = target.origin.z + aimHeight + (feet ? 0 : target.velocity.z * lead * 0.5) - eye.z;
+      const aimAt = apparent(
+        vec3(
+          target.origin.x + target.velocity.x * lead,
+          target.origin.y + target.velocity.y * lead,
+          target.origin.z + aimHeight + (feet ? 0 : target.velocity.z * lead * 0.5),
+        ),
+      );
+      const ax = aimAt.x - eye.x;
+      const ay = aimAt.y - eye.y;
+      const az = aimAt.z - eye.z;
       this.wander(world);
       const err = spec.id === "railgun" ? this.skill.railAimScale : 1;
       lookYaw = Math.atan2(ay, ax) + this.errYaw * err;
@@ -250,12 +288,17 @@ export class Bot {
         lookYaw = this.yaw;
         lookPitch = this.pitch;
       }
+      const away = me.health < LOW_HEALTH ? this.escapeThroughPortal(world, me, target) : null;
       if (pickup && pickup.kind === "health" && me.health < LOW_HEALTH) {
         // Hurting: back off towards health, still shooting.
         this.nav.goTo(pickup.origin);
         steer = this.nav.steer(world, me);
+      } else if (away) {
+        // Hurting, no health to go for: out through a portal that leads away from them, still shooting.
+        this.nav.goTo(away);
+        steer = this.nav.steer(world, me);
       } else {
-        steer = this.fightMove(world, me, target, FIGHT_RANGE[spec.id]);
+        steer = this.fightMove(world, me, seenAt!, FIGHT_RANGE[spec.id]);
         this.dodging = true;
       }
       this.turn(lookYaw, lookPitch);
@@ -402,6 +445,17 @@ export class Bot {
 
   /** Who it can see, and who just shot it. */
   private perceive(world: World, me: PlayerState) {
+    // Saw them go through a portal: it knows where that leads, so the chase goes on from the far side.
+    for (const e of world.events) {
+      if (e.type === "teleport" && e.player === this.target && this.targetVisible) {
+        const t = world.players.get(e.player);
+        if (t) {
+          this.lastSeen = { ...t.origin };
+          this.seenTick = world.tick;
+        }
+      }
+      if (e.type === "teleport" && e.player === me.id && me.health < LOW_HEALTH) this.escapedTick = world.tick;
+    }
     // Shot from anywhere: after a moment (longer at lower skill) it knows roughly where from, and turns to look.
     for (const e of world.events) {
       if (e.type !== "hit" || e.victim !== me.id || e.attacker === me.id || this.shotBy) continue;
@@ -417,26 +471,26 @@ export class Bot {
       }
     }
 
-    let best: PlayerState | null = null;
-    let bestDist = Infinity;
-    let bestHeight = CHEST;
-    let currentHeight: number | null = null;
+    type Sighting = { p: PlayerState; height: number; via: { from: Portal; to: Portal } | null; d: number };
+    let best: Sighting | null = null;
+    let current: Sighting | null = null;
     for (const p of world.players.values()) {
       // Someone under spawn protection isn't worth a shot yet.
       if (p === me || !p.alive || (me.team !== 0 && p.team === me.team) || world.tick < p.protectedUntil) continue;
-      const h = this.canSee(world, me, p);
-      if (h === null) continue;
-      if (p.id === this.target) currentHeight = h;
-      const d = Math.hypot(p.origin.x - me.origin.x, p.origin.y - me.origin.y, p.origin.z - me.origin.z);
-      if (d < bestDist) {
-        bestDist = d;
-        best = p;
-        bestHeight = h;
-      }
+      const direct = this.canSee(world, me, p);
+      const seen: Sighting | null =
+        direct !== null
+          ? { p, height: direct, via: null, d: Math.hypot(p.origin.x - me.origin.x, p.origin.y - me.origin.y, p.origin.z - me.origin.z) }
+          : this.canSeeThrough(world, me, p);
+      if (!seen) continue;
+      if (p.id === this.target) current = seen;
+      if (!best || seen.d < best.d) best = seen;
     }
-    const pick = currentHeight !== null ? world.players.get(this.target!)! : best;
-    if (pick) {
-      this.aimHeight = currentHeight ?? bestHeight;
+    const chosen = current ?? best;
+    const pick = chosen?.p ?? null;
+    if (chosen && pick) {
+      this.aimHeight = chosen.height;
+      this.via = chosen.via;
       if (pick.id !== this.target || !this.targetVisible) this.spottedTick = world.tick;
       this.target = pick.id;
       this.targetVisible = true;
@@ -470,6 +524,68 @@ export class Bot {
     return null;
   }
 
+  /**
+   * Someone seen through an open portal pair it's looking into: they're in front of
+   * the far end, and the line from its eye into this end and out of that one to them
+   * is clear. The height above their origin it can see, the pair, and the distance
+   * the way through; or null.
+   */
+  private canSeeThrough(world: World, me: PlayerState, p: PlayerState): { p: PlayerState; height: number; via: { from: Portal; to: Portal }; d: number } | null {
+    if (!this.skill.portalSight) return null;
+    const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
+    const zero = vec3();
+    const cp = Math.cos(this.pitch);
+    const look = vec3(Math.cos(this.yaw) * cp, Math.sin(this.yaw) * cp, Math.sin(this.pitch));
+    for (const from of world.portals) {
+      const to = world.linkedPortal(from);
+      if (!to) continue;
+      const toOpening = sub(from.origin, eye);
+      // Facing it, near enough.
+      if (toOpening.x * from.normal.x + toOpening.y * from.normal.y + toOpening.z * from.normal.z >= 0) continue;
+      if (Math.hypot(toOpening.x, toOpening.y, toOpening.z) > PORTAL_SIGHT_RANGE) continue;
+      for (const h of [CHEST, EYE_HEIGHT]) {
+        const c = vec3(p.origin.x, p.origin.y, p.origin.z + h);
+        const rel = sub(c, to.origin);
+        if (rel.x * to.normal.x + rel.y * to.normal.y + rel.z * to.normal.z <= 0) continue; // behind the far end
+        const ghost = throughPortalPoint(c, to, from);
+        const delta = sub(ghost, eye);
+        const d = Math.hypot(delta.x, delta.y, delta.z) || 1;
+        if (d > PORTAL_SIGHT_RANGE) continue;
+        if ((delta.x * look.x + delta.y * look.y + delta.z * look.z) / d < Math.cos(this.skill.fovHalf)) continue;
+        const t = segmentIntoPortal(eye, delta, from);
+        if (t === null) continue; // the line doesn't go through the opening
+        const at = addScaled(eye, delta, t);
+        if (world.collision.traceBox(eye, addScaled(at, from.normal, 1), zero, zero).fraction < 1) continue;
+        const out = addScaled(throughPortalPoint(at, from, to), to.normal, 1);
+        if (world.collision.traceBox(out, c, zero, zero).fraction < 1) continue;
+        return { p, height: h, via: { from, to }, d };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Hurting in a fight (Normal and up): the far side of an open portal pair close by
+   * that lands well away from the enemy, to head for; or null.
+   */
+  private escapeThroughPortal(world: World, me: PlayerState, enemy: PlayerState): Vec3 | null {
+    if (!this.skill.portalEscape || world.tick - this.escapedTick < ESCAPE_COOLDOWN_TICKS) return null;
+    let best: Vec3 | null = null;
+    let bestDist = ESCAPE_REACH;
+    for (const [entry, edges] of portalLinks(world, this.graph)) {
+      const start = this.graph.nodes[entry].pos;
+      const d = Math.hypot(start.x - me.origin.x, start.y - me.origin.y, start.z - me.origin.z);
+      if (d >= bestDist) continue;
+      for (const e of edges) {
+        const land = this.graph.nodes[e.to].pos;
+        if (Math.hypot(land.x - enemy.origin.x, land.y - enemy.origin.y, land.z - enemy.origin.z) < ESCAPE_DISTANCE) continue;
+        best = land;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
   /** Aim wander: drifts to a new random offset every third of a second or so. */
   private wander(world: World) {
     const slot = Math.floor((world.tick + this.id * 7) / 20);
@@ -497,9 +613,9 @@ export class Bot {
   }
 
   /** Strafe side to side, closing in or backing off, never off a drop. */
-  private fightMove(world: World, me: PlayerState, target: PlayerState, keep: { near: number; far: number }): Steer {
-    const dx = target.origin.x - me.origin.x;
-    const dy = target.origin.y - me.origin.y;
+  private fightMove(world: World, me: PlayerState, target: Vec3, keep: { near: number; far: number }): Steer {
+    const dx = target.x - me.origin.x;
+    const dy = target.y - me.origin.y;
     const dist = Math.hypot(dx, dy) || 1;
     const ux = dx / dist;
     const uy = dy / dist;
