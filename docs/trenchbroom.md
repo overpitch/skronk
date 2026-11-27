@@ -68,6 +68,8 @@ Put spawns' boxes just above the floor, not inside it (origin 25 above the floor
 
 The map's title: the worldspawn entity's `message` key (with nothing selected, the Entity inspector shows worldspawn). The game's Map menu shows it.
 
+Overlapping brushes are fine too: the game hides faces buried inside another brush, and where two brushes have a face in exactly the same place (the top of a wall flush with a floor it overlaps) it draws only the later brush's, so nothing flickers. Clip and nodraw brushes don't hide anything.
+
 Groups and layers are fine: grouped brushes count as normal world geometry. Other brush entities (doors, triggers) are ignored.
 
 ## Testing a map

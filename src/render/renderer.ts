@@ -16,6 +16,7 @@ import { playerPortalOwner, type PortalOwner, type PortalSlot } from "../sim/por
 import { FIZZLE_COLOR, portalColor } from "./portalColors";
 import { TextureLibrary } from "./textures";
 import { ViewModel } from "./viewmodel";
+import { visibleSurfaces } from "../level/visibleSurfaces";
 import { WEAPONS, type WeaponId } from "../sim/weapons";
 
 /** Pickup shapes and colours: a spinning gem for health, armor and ammo, a little gun for weapons. */
@@ -118,8 +119,8 @@ export class GameRenderer {
   loadLevel(level: LevelData) {
     // One mesh per texture keeps draw calls low (a handful per map).
     const byTexture = new Map<string, { pos: number[]; nrm: number[]; uv: number[]; idx: number[] }>();
-    for (const s of level.surfaces) {
-      if (!s.visible) continue;
+    // Hidden and doubled faces left out (they'd flicker where brushes overlap).
+    for (const s of visibleSurfaces(level)) {
       let g = byTexture.get(s.texture);
       if (!g) byTexture.set(s.texture, (g = { pos: [], nrm: [], uv: [], idx: [] }));
       const base = g.pos.length / 3;
