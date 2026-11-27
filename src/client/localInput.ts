@@ -4,11 +4,22 @@
  */
 import { emptyCommand, type PlayerCommand } from "../sim/command";
 import { WEAPON_COUNT } from "../sim/weapons";
+import type { AssistResult } from "./aimAssist";
 
 const MOUSE_SENSITIVITY = 0.0022; // radians per pixel
 const PAD_DEADZONE = 0.15;
 const PAD_YAW_RATE = 4.0; // radians per second at full stick
 const PAD_PITCH_RATE = 2.6;
+/**
+ * Stick response: speed rises with the stick's push to this power, so small pushes
+ * give fine aim. Held right at the edge for a moment, turning speeds up (to TURN_BOOST
+ * times) so you can still spin round quickly.
+ */
+const PAD_CURVE = 2.2;
+const BOOST_EDGE = 0.93;
+const BOOST_DELAY = 0.2;
+const BOOST_RAMP = 0.35;
+const TURN_BOOST = 1.8;
 const PITCH_LIMIT = (89 * Math.PI) / 180;
 /** Wheel travel for one weapon step (a notch on a mouse is about 100; trackpads send many small ones). */
 const WHEEL_STEP = 60;
@@ -31,6 +42,10 @@ const PAD_LT = 6;
 const PAD_RT = 7;
 const PAD_MENU = 9;
 const PAD_L3 = 10;
+const PAD_R3 = 11;
+
+/** Stick turn speed (0..1 of the base rate, before any edge boost) for a push of `v` (-1..1) past the deadzone. */
+export const stickResponse = (v: number) => Math.sign(v) * Math.abs(v) ** PAD_CURVE;
 
 /** Radial deadzone, rescaled so the live range still starts at 0. */
 function deadzone(x: number, y: number): [number, number] {
@@ -65,6 +80,20 @@ export class LocalInput {
   onCycleGraphics: () => void = () => {};
   /** Gamepad B while the menu is open: next match rules. */
   onCycleMatch: () => void = () => {};
+  /** Gamepad LT (-1) / RT (+1) while the menu is open: controller look speed. */
+  onChangeStickSpeed: (delta: number) => void = () => {};
+  /** Gamepad R3 / L3 while the menu is open: aim assist / rumble on or off. */
+  onToggleAimAssist: () => void = () => {};
+  onToggleRumble: () => void = () => {};
+  /** Player's multiplier on the controller's look speed. */
+  stickSensitivity = 1;
+  /** Controller aim assist, given how active the player is (0..1) and the frame time; null for none. */
+  aimAssist: ((active: number, dt: number) => AssistResult) | null = null;
+  /** Rumble on the controller (when it can). */
+  rumbleOn = true;
+  private padIndex = -1;
+  /** Seconds the look stick has been held at the edge (for the turn boost). */
+  private edgeTime = 0;
 
   private keys = new Set<string>();
   /**
@@ -164,6 +193,7 @@ export class LocalInput {
   update(dt: number, menuOpen: boolean) {
     const pads = navigator.getGamepads?.() ?? [];
     const pad = pads.find((p) => p && p.connected) ?? null;
+    this.padIndex = pad ? pad.index : -1;
     if (!pad) {
       this.pad = { forward: 0, right: 0, jump: false, sprint: false, fire: false, portal: false };
       this.padSprint = false;
@@ -177,7 +207,7 @@ export class LocalInput {
     const pressed = (i: number) => !!pad.buttons[i]?.pressed;
     const justPressed = (i: number) => pressed(i) && !this.padPrev[i];
     // Menu buttons change settings; any other button starts play.
-    const menuButtons = [PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT, PAD_UP, PAD_DOWN, PAD_VIEW];
+    const menuButtons = [PAD_B, PAD_X, PAD_Y, PAD_LB, PAD_RB, PAD_LEFT, PAD_RIGHT, PAD_UP, PAD_DOWN, PAD_VIEW, PAD_LT, PAD_RT, PAD_L3, PAD_R3];
     const otherJustPressed = () => pad.buttons.some((_, i) => !menuButtons.includes(i) && justPressed(i));
     if (menuOpen) {
       if (justPressed(PAD_Y)) this.onToggleInvertLook();
@@ -189,6 +219,10 @@ export class LocalInput {
       else if (justPressed(PAD_UP)) this.onToggleNetwork();
       else if (justPressed(PAD_DOWN)) this.onCycleGraphics();
       else if (justPressed(PAD_B)) this.onCycleMatch();
+      else if (justPressed(PAD_LT)) this.onChangeStickSpeed(-1);
+      else if (justPressed(PAD_RT)) this.onChangeStickSpeed(1);
+      else if (justPressed(PAD_R3)) this.onToggleAimAssist();
+      else if (justPressed(PAD_L3)) this.onToggleRumble();
       else if (otherJustPressed()) this.onActivate();
     } else if (justPressed(PAD_MENU)) {
       this.onDeactivate();
@@ -203,9 +237,15 @@ export class LocalInput {
 
     const [mx, my] = deadzone(pad.axes[0] ?? 0, pad.axes[1] ?? 0);
     const [lx, ly] = deadzone(pad.axes[2] ?? 0, pad.axes[3] ?? 0);
-    // Squared response curve: fine aim near centre, fast turns at the edge.
-    const curve = (v: number) => Math.sign(v) * v * v;
-    this.addLook(-curve(lx) * PAD_YAW_RATE * dt, -curve(ly) * PAD_PITCH_RATE * dt);
+    // Fine aim near the centre; held at the edge, turning speeds up after a moment.
+    const push = Math.hypot(lx, ly);
+    this.edgeTime = push >= BOOST_EDGE && dt > 0 ? this.edgeTime + dt : 0;
+    const boost = 1 + (TURN_BOOST - 1) * Math.max(0, Math.min(1, (this.edgeTime - BOOST_DELAY) / BOOST_RAMP));
+    // Aim assist (controller only): slower on a target, and a gentle pull while you're moving or aiming.
+    const assist = dt > 0 && this.aimAssist ? this.aimAssist(Math.max(push, Math.hypot(mx, my)), dt) : null;
+    const k = this.stickSensitivity * (assist?.scale ?? 1);
+    this.addLook(-stickResponse(lx) * PAD_YAW_RATE * boost * k * dt, -stickResponse(ly) * PAD_PITCH_RATE * k * dt);
+    if (assist) this.addAssist(assist.yaw, assist.pitch);
     this.padScores = pressed(PAD_VIEW);
     if (-my < 0.2) this.padSprint = false;
     this.pad = {
@@ -247,6 +287,19 @@ export class LocalInput {
     if (this.portalPresses === 0) return false;
     this.portalPresses = 0;
     return true;
+  }
+
+  /** A rumble on the controller, if it has one: `strong` the low motor, `weak` the high one (0..1). */
+  rumble(strong: number, weak: number, ms: number) {
+    if (!this.rumbleOn || this.padIndex < 0) return;
+    const pad = navigator.getGamepads?.()[this.padIndex] as (Gamepad & { vibrationActuator?: { playEffect?: (t: string, p: object) => Promise<unknown> } }) | null;
+    void pad?.vibrationActuator?.playEffect?.("dual-rumble", { startDelay: 0, duration: ms, strongMagnitude: strong, weakMagnitude: weak })?.catch(() => {});
+  }
+
+  /** Aim assist's nudge: in view terms already (not inverted by the look setting). */
+  private addAssist(dYaw: number, dPitch: number) {
+    this.yaw = (this.yaw + dYaw) % (Math.PI * 2);
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + dPitch));
   }
 
   /** dPitch is the uninverted delta (mouse/stick up = look up). */

@@ -48,6 +48,7 @@
       <p>Click to play &middot; or press A on a controller</p>
       <p class="keys">WASD move &middot; Shift+W run &middot; Space jump &middot; Mouse look &middot; Left click shoot &middot; Right click or E portal &middot; 1&ndash;5 or wheel weapons &middot; Esc release mouse</p>
       <p class="keys">Controller: click left stick to run &middot; right trigger shoots &middot; left trigger portal &middot; LB / RB weapons &middot; Menu button pauses</p>
+      <p class="keys">Controller in this menu: LT / RT look speed &middot; R3 aim assist &middot; L3 rumble</p>
       <div class="setting-row">
         <button id="network" class="setting" type="button">Join network game</button>
         <button id="map-choice" class="setting" type="button">Map</button>
@@ -56,6 +57,8 @@
         <button id="match-choice" class="setting" type="button">Match: First to 20 or 10 min</button>
         <button id="invert-look" class="setting" type="button" aria-pressed="false">Invert look: Off</button>
         <button id="graphics" class="setting" type="button">Graphics: Auto</button>
+        <button id="aim-assist" class="setting" type="button">Aim assist: On</button>
+        <button id="rumble" class="setting" type="button">Rumble: On</button>
       </div>
       <p class="keys">Click to change (right-click Bots for fewer) &middot; controller: D-pad up network &middot; D-pad down graphics &middot; D-pad left / right map &middot; LB / RB bots &middot; X difficulty &middot; B match &middot; Y invert look &middot; hold Tab or View for scores</p>
       <label class="setting slider" for="player-name">
@@ -66,6 +69,11 @@
         Mouse sensitivity
         <input id="mouse-sens" type="range" min="0.2" max="4" step="0.05" value="1" />
         <output id="mouse-sens-value" for="mouse-sens">1.00</output>
+      </label>
+      <label class="setting slider" for="stick-sens">
+        Controller look speed
+        <input id="stick-sens" type="range" min="0.5" max="2" step="0.1" value="1" />
+        <output id="stick-sens-value" for="stick-sens">1.0</output>
       </label>
       <label class="setting slider" for="volume">
         Volume

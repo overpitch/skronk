@@ -8,10 +8,11 @@ import { Hud } from "./client/hud";
 import { LocalInput } from "./client/localInput";
 import { NetClient, serverAddress } from "./client/netClient";
 import { Predictor } from "./client/prediction";
-import { cleanName, DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_RANGE, saveSettings } from "./client/settings";
+import { cleanName, DIFFICULTIES, difficultyOf, loadSettings, MAX_BOTS, MOUSE_SENSITIVITY_RANGE, saveSettings, STICK_SENSITIVITY_RANGE } from "./client/settings";
+import { aimAssist, type AssistTarget } from "./client/aimAssist";
 import { GAME_PORT } from "./net/protocol";
 import { TrenchBroomLoader } from "./level/trenchbroom/trenchbroomLoader";
-import { lerp, vec3 } from "./math/vec3";
+import { lerp, set, vec3 } from "./math/vec3";
 import { applySnapshot } from "./net/snapshot";
 import { browserDevice, chooseQuality, type QualitySetting } from "./render/quality";
 import { GameRenderer } from "./render/renderer";
@@ -188,6 +189,10 @@ async function start() {
   const networkButton = document.getElementById("network") as HTMLButtonElement;
   const graphicsButton = document.getElementById("graphics") as HTMLButtonElement;
   const nameBox = document.getElementById("player-name") as HTMLInputElement;
+  const stickSlider = document.getElementById("stick-sens") as HTMLInputElement;
+  const stickValue = document.getElementById("stick-sens-value")!;
+  const assistButton = document.getElementById("aim-assist") as HTMLButtonElement;
+  const rumbleButton = document.getElementById("rumble") as HTMLButtonElement;
   sensSlider.min = String(MOUSE_SENSITIVITY_RANGE.min);
   sensSlider.max = String(MOUSE_SENSITIVITY_RANGE.max);
   sensSlider.step = String(MOUSE_SENSITIVITY_RANGE.step);
@@ -196,6 +201,14 @@ async function start() {
     input.mouseSensitivity = settings.mouseSensitivity;
     sensSlider.value = String(settings.mouseSensitivity);
     sensValue.textContent = settings.mouseSensitivity.toFixed(2);
+    input.stickSensitivity = settings.stickSensitivity;
+    input.rumbleOn = settings.rumble;
+    stickSlider.value = String(settings.stickSensitivity);
+    stickValue.textContent = settings.stickSensitivity.toFixed(1);
+    assistButton.textContent = `Aim assist: ${settings.aimAssist ? "On" : "Off"}`;
+    assistButton.setAttribute("aria-pressed", String(settings.aimAssist));
+    rumbleButton.textContent = `Rumble: ${settings.rumble ? "On" : "Off"}`;
+    rumbleButton.setAttribute("aria-pressed", String(settings.rumble));
     invertButton.textContent = `Invert look: ${settings.invertLook ? "On" : "Off"}`;
     invertButton.setAttribute("aria-pressed", String(settings.invertLook));
     mapButton.textContent = `Map: ${mapTitle}`;
@@ -332,6 +345,51 @@ async function start() {
     if (e.key === "Enter") nameBox.blur();
   });
   input.onToggleInvertLook = toggleInvertLook;
+  // Controller: look speed (slider, or LT / RT in the menu), aim assist (R3), rumble (L3).
+  const { min: stickMin, max: stickMax, step: stickStep } = STICK_SENSITIVITY_RANGE;
+  const setStickSpeed = (v: number) => {
+    settings.stickSensitivity = Math.round(Math.max(stickMin, Math.min(stickMax, v)) * 10) / 10;
+    applySettings();
+  };
+  stickSlider.addEventListener("input", () => setStickSpeed(Number(stickSlider.value)));
+  stickSlider.addEventListener("change", () => {
+    saveSettings(settings);
+    stickSlider.blur();
+  });
+  input.onChangeStickSpeed = (delta) => {
+    setStickSpeed(settings.stickSensitivity + delta * stickStep);
+    saveSettings(settings);
+  };
+  const toggleAimAssist = () => {
+    settings.aimAssist = !settings.aimAssist;
+    saveSettings(settings);
+    applySettings();
+  };
+  const toggleRumble = () => {
+    settings.rumble = !settings.rumble;
+    saveSettings(settings);
+    applySettings();
+    if (settings.rumble) input.rumble(0.4, 0.4, 150); // so you feel it's on
+  };
+  onClick(assistButton, toggleAimAssist);
+  onClick(rumbleButton, toggleRumble);
+  input.onToggleAimAssist = toggleAimAssist;
+  input.onToggleRumble = toggleRumble;
+  // Aim assist: the enemies you can see right now, chest high.
+  const assistEye = vec3();
+  const zero = vec3();
+  input.aimAssist = (activity, dt) => {
+    if (!settings.aimAssist || !me.alive) return { scale: 1, yaw: 0, pitch: 0 };
+    set(assistEye, me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
+    const targets: AssistTarget[] = [];
+    for (const p of world.players.values()) {
+      if (p === me || !p.alive || (me.team !== 0 && p.team === me.team)) continue;
+      const centre = vec3(p.origin.x, p.origin.y, p.origin.z + 4);
+      if (world.collision.traceBox(assistEye, centre, zero, zero).fraction < 1) continue;
+      targets.push({ centre, velocity: p.velocity });
+    }
+    return aimAssist(assistEye, input.yaw, input.pitch, targets, activity, dt);
+  };
   sensSlider.addEventListener("input", () => {
     settings.mouseSensitivity = Number(sensSlider.value);
     applySettings();
@@ -460,6 +518,18 @@ async function start() {
     const time = now / 1000;
     renderer.render({ world, localId, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt, predictedFire: !!net }, frameEvents);
     if (firedNow) renderer.localShot(firedWeapon);
+    // Rumble: your shots (harder for the heavy weapons), hits on you (by damage), being fragged.
+    const rumbleShot = (w: WeaponId) => {
+      if (w === "machinegun") input.rumble(0.05, 0.25, 50);
+      else if (w === "fists") input.rumble(0.3, 0.1, 80);
+      else input.rumble(w === "railgun" ? 0.5 : 0.7, 0.5, w === "rocketlauncher" ? 160 : 120);
+    };
+    if (firedNow) rumbleShot(firedWeapon);
+    for (const e of frameEvents) {
+      if (e.type === "fire" && e.player === localId && !net) rumbleShot(e.weapon);
+      if (e.type === "hit" && e.victim === localId) input.rumble(Math.min(1, 0.3 + e.damage / 60), 0.4, 140);
+      if (e.type === "kill" && e.victim === localId) input.rumble(1, 0.8, 450);
+    }
     const said = hud.update(world, me, frameEvents, dt, input.scoresHeld);
     // In a network game your shot's sound plays when you fire, not when the server's word comes back.
     const heard = net ? frameEvents.filter((e) => !(e.type === "fire" && e.player === localId)) : frameEvents;

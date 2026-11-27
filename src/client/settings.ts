@@ -36,14 +36,35 @@ export interface Settings {
   quality: QualitySetting;
   /** Match rules against bots (practice with no bots has no limits). */
   match: MatchPresetId;
+  /** Multiplier on the controller's look speed. */
+  stickSensitivity: number;
+  /** Controller aim assist (never applies to the mouse). */
+  aimAssist: boolean;
+  /** Controller rumble. */
+  rumble: boolean;
 }
+
+export const STICK_SENSITIVITY_RANGE = { min: 0.5, max: 2, step: 0.1 };
 
 export const MOUSE_SENSITIVITY_RANGE = { min: 0.2, max: 4, step: 0.05 };
 
 const STORAGE_KEY = "skronk.settings";
 
 export function defaultSettings(): Settings {
-  return { invertLook: false, mouseSensitivity: 1, difficulty: "normal", bots: 0, volume: 1, map: "test_box", name: "", quality: "auto", match: "standard" };
+  return {
+    invertLook: false,
+    mouseSensitivity: 1,
+    difficulty: "normal",
+    bots: 0,
+    volume: 1,
+    map: "test_box",
+    name: "",
+    quality: "auto",
+    match: "standard",
+    stickSensitivity: 1,
+    aimAssist: true,
+    rumble: true,
+  };
 }
 
 export const difficultyOf = (id: Difficulty) => DIFFICULTIES.find((d) => d.id === id) ?? DIFFICULTIES[2];
@@ -64,6 +85,10 @@ export function loadSettings(): Settings {
     if (typeof saved.name === "string") settings.name = cleanName(saved.name);
     if (["auto", "full", "light"].includes(saved.quality)) settings.quality = saved.quality;
     if (MATCH_PRESETS.some((m) => m.id === saved.match)) settings.match = saved.match;
+    const stick = saved.stickSensitivity;
+    if (typeof stick === "number" && stick >= STICK_SENSITIVITY_RANGE.min && stick <= STICK_SENSITIVITY_RANGE.max) settings.stickSensitivity = stick;
+    if (typeof saved.aimAssist === "boolean") settings.aimAssist = saved.aimAssist;
+    if (typeof saved.rumble === "boolean") settings.rumble = saved.rumble;
   } catch {
     // Unreadable storage: keep defaults.
   }
