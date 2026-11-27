@@ -40,7 +40,7 @@ import { choosePickup, LOW_HEALTH, pickupWorth, pickupAppeal, runningDry } from 
 import { portalLinks } from "./portalLinks";
 import { PortalJob } from "./portalJob";
 import { planPortals, preparePortalPlanner, type PortalSpot } from "./portalPlanner";
-import { chooseWeapon, FIGHT_RANGE, hasGunAmmo, isWeaponKind } from "./weaponChoice";
+import { chooseWeapon, FIGHT_RANGE, hasGunAmmo, isWeaponKind, lobAim } from "./weaponChoice";
 import { PERSONALITIES, type Personality } from "./personality";
 
 export interface BotSkill {
@@ -272,10 +272,17 @@ export class Bot {
     if (target && fighting) {
       // Fight: aim where it will be (partly), plus wander. Rockets go at the feet of someone on the ground.
       // Through a portal: aim where they appear in the opening; the shot comes out of the other end at them.
-      const feet = this.skill.feetRockets && !via && spec.splash !== null && target.onGround && range > 200;
+      // Grenades are lobbed at the feet (an arc, worked out below).
+      const lobbed = spec.gravity > 0;
+      const feet = !via && ((this.skill.feetRockets && spec.splash !== null && target.onGround && range > 200) || lobbed);
       const aimHeight = feet ? PLAYER_MINS.z + 4 : this.aimHeight;
       const centre = apparent(vec3(target.origin.x, target.origin.y, target.origin.z + aimHeight));
-      const flight = spec.shot === "projectile" ? Math.hypot(centre.x - eye.x, centre.y - eye.y, centre.z - eye.z) / spec.speed : 0;
+      const flight =
+        spec.shot !== "projectile"
+          ? 0
+          : lobbed
+            ? lobAim(Math.hypot(centre.x - eye.x, centre.y - eye.y), centre.z - eye.z, spec).time
+            : Math.hypot(centre.x - eye.x, centre.y - eye.y, centre.z - eye.z) / spec.speed;
       const lead = flight * this.skill.lead;
       const aimAt = apparent(
         vec3(
@@ -290,7 +297,7 @@ export class Bot {
       this.wander(world);
       const err = spec.id === "railgun" ? this.skill.railAimScale : 1;
       lookYaw = Math.atan2(ay, ax) + this.errYaw * err;
-      lookPitch = Math.atan2(az, Math.hypot(ax, ay)) + this.errPitch * err;
+      lookPitch = (lobbed ? lobAim(Math.hypot(ax, ay), az, spec).pitch : Math.atan2(az, Math.hypot(ax, ay))) + this.errPitch * err;
       // Start turning after half the reaction time, shoot after all of it.
       const since = world.tick - this.spottedTick;
       if (since < this.skill.reactionTicks / 2) {

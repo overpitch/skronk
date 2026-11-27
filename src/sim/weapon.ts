@@ -27,8 +27,10 @@ export interface Projectile {
   velocity: Vec3;
   /** Portals passed through. After the first, the shot can hit whoever fired it. */
   hops: number;
-  /** What fired it (the machine gun's bullets, rockets). */
+  /** What fired it (the machine gun's bullets, rockets, grenades). */
   weapon: WeaponId;
+  /** Grenades: the tick it goes off by itself. */
+  fuse?: number;
 }
 
 /** Unit vector for yaw (0 = +X, counter-clockwise) and pitch (positive = up). */

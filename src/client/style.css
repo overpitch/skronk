@@ -390,10 +390,13 @@ body {
 }
 /* Weapons held, by slot: the one in hand lit up, ones you haven't got faint. */
 #weapon-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 6px;
-  margin-bottom: 6px;
 }
 #weapon-bar .slot {
   font-size: 12px;

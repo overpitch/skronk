@@ -78,6 +78,8 @@ writeMap("portal_gym", {
     { classname: "pickup_railgun", origin: "900 0 17" },
     { classname: "pickup_rocketlauncher", origin: "448 -448 -239" },
     { classname: "pickup_shotgun", origin: "-640 -280 17" },
+    // A grenade launcher by the target wall: lob grenades over it, or through a portal.
+    { classname: "pickup_grenadelauncher", origin: "100 -100 17" },
     { classname: "light", origin: "-640 0 420", light: "450" },
     { classname: "light", origin: "-192 100 120", light: "350", _color: "0.6 0.8 1" },
     { classname: "light", origin: "448 -100 420", light: "400" },

@@ -60,7 +60,7 @@ Right-click in the 2D or 3D view → Create Point Entity, or drag from the Entit
 | `pickup_health` | `amount` (default 25) |
 | `pickup_armor` | `amount` (default 50) |
 | `pickup_ammo` | none: an ammo box tops up every gun the player holds |
-| `pickup_shotgun`, `pickup_rocketlauncher`, `pickup_railgun` | `amount`: ammo it comes with (default 10) |
+| `pickup_shotgun`, `pickup_grenadelauncher`, `pickup_rocketlauncher`, `pickup_railgun` | `amount`: ammo it comes with (default 10) |
 | `pickup_machinegun` | `amount` (default 50): machine gun ammo (everyone starts with the gun) |
 | `light` | `light` brightness (default 300), `_color` as `R G B` from 0 to 1 |
 

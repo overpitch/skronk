@@ -50,6 +50,8 @@ export interface ProjectileSnap {
   velocity: V3;
   hops: number;
   weapon: WeaponId;
+  /** Grenades: the tick it goes off. */
+  fuse?: number;
 }
 
 /** Everything a client needs to draw one tick of the world. */

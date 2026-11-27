@@ -61,10 +61,14 @@ export class Sfx {
           if (e.weapon === "fists") this.swing(gain, pan);
           else if (e.weapon === "shotgun") this.boom(gain, pan);
           else if (e.weapon === "rocketlauncher") this.launch(gain, pan);
+          else if (e.weapon === "grenadelauncher") this.thunk(gain, pan);
           else if (e.weapon === "railgun") this.zap(gain, pan);
           else this.shot(gain, pan);
           break;
         }
+        case "bounce":
+          this.clink(...at(e.pos));
+          break;
         case "explosion":
           this.blast(...at(e.pos));
           break;
@@ -358,6 +362,22 @@ export class Sfx {
     const dest = this.out(gain, pan);
     this.drop(dest, 90, 45, 0.18, 0.9);
     this.noiseBurst(dest, "bandpass", 300, 1400, 0.45, 0.7, 1.2);
+  }
+
+  /** Grenade launcher: a hollow pop. */
+  private thunk(gain: number, pan: number) {
+    if (gain <= 0.01) return;
+    const dest = this.out(gain, pan);
+    this.drop(dest, 160, 60, 0.14, 0.9);
+    this.noiseBurst(dest, "bandpass", 900, 300, 0.12, 0.6, 1.5);
+  }
+
+  /** A grenade bouncing: a short metal clink. */
+  private clink(gain: number, pan: number) {
+    if (gain <= 0.01) return;
+    const dest = this.out(gain * 0.7, pan);
+    this.drop(dest, 1700 + Math.random() * 300, 1200, 0.07, 0.35, "triangle");
+    this.noiseBurst(dest, "highpass", 3000, 2000, 0.03, 0.3);
   }
 
   /** Railgun: a bright electric crack with a ringing tail. */

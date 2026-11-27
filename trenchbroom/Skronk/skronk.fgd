@@ -34,6 +34,11 @@
     amount(integer) : "Ammo it comes with" : 10
 ]
 
+@PointClass size(-16 -16 -16, 16 16 16) color(111 191 74) = pickup_grenadelauncher : "Grenade launcher"
+[
+    amount(integer) : "Ammo it comes with" : 10
+]
+
 @PointClass size(-16 -16 -16, 16 16 16) color(255 90 58) = pickup_rocketlauncher : "Rocket launcher"
 [
     amount(integer) : "Ammo it comes with" : 10

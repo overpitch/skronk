@@ -47,6 +47,7 @@ export function captureSnapshot(world: World): WorldSnapshot {
       velocity: v3(pr.velocity),
       hops: pr.hops,
       weapon: pr.weapon,
+      fuse: pr.fuse,
     })),
     portals: world.portals.map((p) => ({ ...p })),
     pickups: world.pickups.map((pk) => pk.availableAtTick),
@@ -94,6 +95,7 @@ export function applySnapshot(world: World, snap: WorldSnapshot) {
       velocity: into(vec3(), s.velocity),
       hops: s.hops,
       weapon: s.weapon,
+      fuse: s.fuse,
     });
   }
   world.restorePortals(snap.portals);

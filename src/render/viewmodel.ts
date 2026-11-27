@@ -54,6 +54,8 @@ export class ViewModel {
     const cyan = new THREE.MeshBasicMaterial({ color: 0x4fd6ff });
     const orange = new THREE.MeshBasicMaterial({ color: 0xff7a3a });
     const rail = new THREE.MeshBasicMaterial({ color: 0x7ff0ff });
+    const green = new THREE.MeshLambertMaterial({ color: 0x3d5a2a });
+    const lime = new THREE.MeshBasicMaterial({ color: 0x9cff5a });
 
     const model = (id: WeaponId, m: Omit<Model, "group">, build: (part: Part) => void) => {
       const group = new THREE.Group();
@@ -109,6 +111,15 @@ export class ViewModel {
       const stock = part(box(2.2, 3.2, 4), wood, 0, -1.4, 5, false);
       stock.rotation.x = -0.25;
       part(box(0.3, 0.4, 5), orange, 1.45, 0.7, 0.5);
+    });
+
+    model("grenadelauncher", { flashAt: new THREE.Vector3(0, 0.4, -11), flashColor: 0xffc070, kickBack: 2.6, kickPitch: 0.26 }, (part) => {
+      part(box(2.6, 2.6, 8), metal, 0, 0, 0.5, false);
+      tube(part, 1.25, 1.25, 7, dark, 0, 0.4, -6.5, false); // short wide barrel
+      tube(part, 1.9, 1.9, 2.6, green, 0, -0.6, -1.5, false); // drum
+      part(box(0.35, 0.5, 5), lime, 1.35, 1.1, -1);
+      const grip = part(box(1.7, 3.6, 2), dark, 0, -2.4, 2.6, false);
+      grip.rotation.x = -0.35;
     });
 
     model("rocketlauncher", { flashAt: new THREE.Vector3(0, 0.8, -11.5), flashColor: 0xffb060, kickBack: 2.4, kickPitch: 0.2 }, (part) => {

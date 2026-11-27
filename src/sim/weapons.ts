@@ -1,6 +1,6 @@
 /**
  * The weapons: what each one does, and the trigger, switching and ammo rules
- * they share. Batch one: fists, machine gun, shotgun, rocket launcher, railgun.
+ * they share: fists, machine gun, shotgun, grenade launcher, rocket launcher, railgun.
  *
  * The ids are plain names, used in code and in map entities (pickup_shotgun).
  * `name` is what players see; it can change without touching anything else.
@@ -12,7 +12,7 @@
 import type { PlayerCommand } from "./command";
 import { secondsToTicks } from "./tick";
 
-export type WeaponId = "fists" | "machinegun" | "shotgun" | "rocketlauncher" | "railgun";
+export type WeaponId = "fists" | "machinegun" | "shotgun" | "grenadelauncher" | "rocketlauncher" | "railgun";
 
 export interface SplashSpec {
   /** Reach of the blast, map units. */
@@ -50,6 +50,14 @@ export interface WeaponSpec {
   /** Melee: speed you get pushed back by when you hit a wall or floor (a punch jump). */
   recoil: number;
   splash: SplashSpec | null;
+  /** Projectiles: falls at this rate (units per second per second; 0 flies straight). */
+  gravity: number;
+  /** Projectiles: bounces off walls and floors keeping this share of its speed into them (0: stops at the first). */
+  bounce: number;
+  /** Projectiles: goes off by itself this long after firing (0: only when it hits something). */
+  fuseTicks: number;
+  /** Projectiles: upward speed added at launch, so it arcs (units per second). */
+  lob: number;
   /** 0: never runs out. */
   ammoPerShot: number;
   maxAmmo: number;
@@ -59,7 +67,23 @@ export interface WeaponSpec {
   boxAmmo: number;
 }
 
-const base = { pellets: 1, spread: 0, range: 0, speed: 0, radius: 0, knockback: 0, lift: 0, recoil: 0, splash: null, pickupAmmo: 0, boxAmmo: 0 };
+const base = {
+  pellets: 1,
+  spread: 0,
+  range: 0,
+  speed: 0,
+  radius: 0,
+  knockback: 0,
+  lift: 0,
+  recoil: 0,
+  splash: null,
+  gravity: 0,
+  bounce: 0,
+  fuseTicks: 0,
+  lob: 0,
+  pickupAmmo: 0,
+  boxAmmo: 0,
+};
 
 /** In slot order: index 0 is key 1. */
 export const WEAPONS: readonly WeaponSpec[] = [
@@ -114,6 +138,25 @@ export const WEAPONS: readonly WeaponSpec[] = [
   },
   {
     ...base,
+    id: "grenadelauncher",
+    name: "Grenade launcher",
+    shot: "projectile",
+    fireTicks: secondsToTicks(0.8),
+    damage: 100,
+    speed: 700,
+    radius: 4,
+    splash: { radius: 150, damage: 100, knockback: 620, selfDamage: 0.4 },
+    gravity: 800,
+    bounce: 0.55,
+    fuseTicks: secondsToTicks(2),
+    lob: 200,
+    ammoPerShot: 1,
+    maxAmmo: 30,
+    pickupAmmo: 10,
+    boxAmmo: 5,
+  },
+  {
+    ...base,
     id: "rocketlauncher",
     name: "Rocket launcher",
     shot: "projectile",
@@ -165,7 +208,7 @@ export const SPAWN_AMMO = 100;
 export const SWITCH_TICKS = secondsToTicks(0.25);
 
 /** With the trigger pulled on an empty weapon, switch to the first of these that has ammo. */
-const EMPTY_SWITCH_ORDER = ["shotgun", "machinegun", "railgun", "rocketlauncher", "fists"].map(weaponIndex);
+const EMPTY_SWITCH_ORDER = ["shotgun", "machinegun", "railgun", "rocketlauncher", "grenadelauncher", "fists"].map(weaponIndex);
 
 /** The part of a player the trigger works on. */
 export interface Armed {

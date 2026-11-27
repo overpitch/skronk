@@ -338,10 +338,11 @@ export class World {
       owner: p.id,
       origin: clone(eye),
       prevOrigin: clone(eye),
-      velocity: scale(dir, spec.speed),
+      velocity: addScaled(scale(dir, spec.speed), vec3(0, 0, 1), spec.lob),
       hops: 0,
       weapon: spec.id,
     };
+    if (spec.fuseTicks > 0) projectile.fuse = this.tick + spec.fuseTicks;
     this.projectiles.push(projectile);
     return projectile.id;
   }
@@ -629,6 +630,12 @@ export class World {
     for (const pr of this.projectiles) {
       copy(pr.prevOrigin, pr.origin);
       const spec = weaponById(pr.weapon);
+      // A grenade whose time is up goes off where it is.
+      if (pr.fuse !== undefined && this.tick >= pr.fuse) {
+        this.explode(pr.owner, spec, clone(pr.origin), null, pr.id);
+        continue;
+      }
+      if (spec.gravity > 0) pr.velocity.z -= spec.gravity * TICK_DT;
       // Fraction of this tick's travel still to go; a portal hop spends part of it.
       let left = 1;
       let gone = false;
@@ -648,6 +655,10 @@ export class World {
         }
         if (s.kind === "none") {
           add(pr.origin, delta, pr.origin);
+          break;
+        }
+        if (s.kind === "wall" && spec.bounce > 0) {
+          this.bounce(pr, spec, s.pos, s.normal);
           break;
         }
         gone = true;
@@ -673,7 +684,23 @@ export class World {
   }
 
   /**
-   * A rocket going off at `pos`: a direct hit takes the weapon's full damage; everyone
+   * A grenade meeting a wall or floor: off it, keeping some of the speed it came in
+   * with (and a little less along the surface). Slow on a floor, it settles and
+   * sits there until its fuse runs out.
+   */
+  private bounce(pr: Projectile, spec: WeaponSpec, pos: Vec3, normal: Vec3) {
+    copy(pr.origin, addScaled(pos, normal, 0.5));
+    const into = dot(pr.velocity, normal);
+    const speed = Math.hypot(pr.velocity.x, pr.velocity.y, pr.velocity.z);
+    if (into < 0) addScaled(pr.velocity, normal, -(1 + spec.bounce) * into, pr.velocity);
+    scale(pr.velocity, 0.85, pr.velocity);
+    const resting = normal.z > 0.7 && Math.hypot(pr.velocity.x, pr.velocity.y, pr.velocity.z) < 60;
+    if (resting) pr.velocity.x = pr.velocity.y = pr.velocity.z = 0;
+    if (speed > 90) this.events.push({ type: "bounce", projectile: pr.id, pos: clone(pr.origin) });
+  }
+
+  /**
+   * A rocket or grenade going off at `pos`: a direct hit takes the weapon's full damage; everyone
    * else in reach, with nothing solid in between, takes splash falling off with distance
    * and is thrown away from the blast (you too: that's a rocket jump, for less damage).
    */

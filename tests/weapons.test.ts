@@ -15,7 +15,7 @@ import {
   WEAPONS,
 } from "../src/sim/weapons";
 import { World, type PlayerState } from "../src/sim/world";
-import { chooseWeapon } from "../src/bots/weaponChoice";
+import { chooseWeapon, lobAim } from "../src/bots/weaponChoice";
 import { loadTestMap } from "./helpers";
 
 const FLOOR_Z = 24.5;
@@ -369,5 +369,46 @@ describe("where hits come from", () => {
     if (hit?.type !== "hit") return;
     // Out of the west wall heading east: it came from the west.
     expect(hit.from.x).toBeLessThan(-0.9);
+  });
+});
+
+describe("grenade launcher", () => {
+  const GRENADES = weaponIndex("grenadelauncher");
+  const spec = weaponById("grenadelauncher");
+
+  it("lobs a grenade that arcs, bounces, settles and goes off when its fuse runs out", () => {
+    const { world, a } = duel(2000); // nobody in the way
+    arm(a, GRENADES);
+    run(world, 1, { 1: { fire: true } });
+    const grenade = world.projectiles[0];
+    expect(grenade.weapon).toBe("grenadelauncher");
+    expect(grenade.velocity.z).toBeGreaterThan(0); // thrown up a little
+    const later = run(world, spec.fuseTicks - 2);
+    expect(later.some((e) => e.type === "bounce")).toBe(true);
+    expect(later.some((e) => e.type === "explosion")).toBe(false);
+    expect(world.projectiles).toHaveLength(1);
+    expect(Math.hypot(grenade.velocity.x, grenade.velocity.y, grenade.velocity.z)).toBeLessThan(60); // settled
+    const boom = run(world, 3);
+    expect(boom.some((e) => e.type === "explosion")).toBe(true);
+    expect(world.projectiles).toHaveLength(0);
+  });
+
+  it("goes off at once when it touches someone", () => {
+    const { world, a, b } = duel(150);
+    arm(a, GRENADES);
+    const events = run(world, 30, { 1: { fire: true, pitch: -0.25 } });
+    const blast = events.findIndex((e) => e.type === "explosion");
+    expect(blast).toBeGreaterThanOrEqual(0);
+    expect(b.health).toBeLessThan(100);
+    expect(hitsOn(events, 2).some((e) => e.type === "hit" && e.damage === spec.damage)).toBe(true);
+  });
+
+  it("has bots aim an arc that lands where they mean", () => {
+    for (const [dist, dz] of [[300, -40], [500, -40], [600, 60]]) {
+      const { pitch, time } = lobAim(dist, dz, spec);
+      const z = (spec.speed * Math.sin(pitch) + spec.lob) * time - (spec.gravity * time * time) / 2;
+      expect(spec.speed * Math.cos(pitch) * time).toBeCloseTo(dist, 0);
+      expect(Math.abs(z - dz)).toBeLessThan(10);
+    }
   });
 });

@@ -26,11 +26,12 @@ const PICKUP_COLORS: Record<string, number> = {
   ammo: 0xffc800,
   machinegun: 0xb0b8c8,
   shotgun: 0xd08a40,
+  grenadelauncher: 0x6fbf4a,
   rocketlauncher: 0xff5a3a,
   railgun: 0x5fe6ff,
 };
 /** View punch per shot, radians. */
-const SHOT_PUNCH: Record<WeaponId, number> = { fists: 0.004, machinegun: 0.006, shotgun: 0.03, rocketlauncher: 0.014, railgun: 0.024 };
+const SHOT_PUNCH: Record<WeaponId, number> = { fists: 0.004, machinegun: 0.006, shotgun: 0.03, grenadelauncher: 0.012, rocketlauncher: 0.014, railgun: 0.024 };
 const RAIL_COLOR = 0x7ff0ff;
 
 const HORIZONTAL_FOV_DEG = 100;
@@ -259,6 +260,7 @@ export class GameRenderer {
     // Tracers and rockets: interpolated, with local shots easing in from the gun muzzle.
     const tracers: { head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[] = [];
     const rockets: { id: number; head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[] = [];
+    const grenades: { pos: THREE.Vector3; fuseLeft: number }[] = [];
     const live = new Set<number>();
     for (const pr of world.projectiles) {
       live.add(pr.id);
@@ -275,10 +277,11 @@ export class GameRenderer {
         travelled = age * Math.hypot(pr.velocity.x, pr.velocity.y, pr.velocity.z);
       }
       if (pr.weapon === "rocketlauncher") rockets.push({ id: pr.id, head, dir, travelled });
+      else if (pr.weapon === "grenadelauncher") grenades.push({ pos: head, fuseLeft: Math.max(0, ((pr.fuse ?? world.tick) - world.tick) / 60) });
       else tracers.push({ head, dir, travelled });
     }
     for (const id of this.tracerOffsets.keys()) if (!live.has(id)) this.tracerOffsets.delete(id);
-    this.effects.update(dt, tracers, rockets);
+    this.effects.update(dt, tracers, rockets, grenades);
 
     // Pickups: hidden while waiting to respawn.
     world.pickups.forEach((pk, i) => {

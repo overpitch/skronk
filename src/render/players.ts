@@ -100,6 +100,8 @@ export class PlayerModels {
   private woodMat = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
   private redMat = new THREE.MeshLambertMaterial({ color: 0x8c2a22 });
   private railMat = new THREE.MeshBasicMaterial({ color: 0x7ff0ff });
+  private greenMat = new THREE.MeshLambertMaterial({ color: 0x3d5a2a });
+  private limeMat = new THREE.MeshBasicMaterial({ color: 0x9cff5a });
 
   constructor(
     private scene: THREE.Scene,
@@ -318,6 +320,13 @@ export class PlayerModels {
       block(4, 16, 2.4, this.gunMat, 29, -3, -3), // double barrel
       block(4.6, 6, 3, this.woodMat, 22, -3, -6), // pump
       block(3, 8, 5, this.woodMat, 4, -3, -6), // stock
+    );
+    model(
+      "grenadelauncher",
+      block(4.5, 18, 5, this.gunMat, 14, -3, -4),
+      block(4.6, 10, 4.6, this.gunMat, 28, -3, -3), // short wide barrel
+      block(6, 6, 6, this.greenMat, 16, -3, -7), // drum
+      dw && block(1, 10, 1, this.limeMat, 16, -5.8, -1.3),
     );
     model(
       "rocketlauncher",

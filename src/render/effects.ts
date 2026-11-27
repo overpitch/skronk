@@ -20,6 +20,7 @@ const SMOKE_SECONDS = 0.9;
 /** A smoke puff every this many units of rocket travel. */
 const SMOKE_SPACING = 18;
 const MAX_BLASTS = 8;
+const MAX_GRENADES = 24;
 const BLAST_SECONDS = 0.4;
 
 /** What the effects can do; the quality mode switches the costly parts. */
@@ -75,6 +76,8 @@ export class Effects {
   private smokeCursor = 0;
   /** Where each rocket last dropped smoke, by projectile id. */
   private smokeFrom = new Map<number, THREE.Vector3>();
+  /** Grenades: a dark ball with a blinking light. */
+  private grenades: { ball: THREE.Mesh; blink: THREE.Sprite }[] = [];
   /** Fireballs. */
   private blasts: { sprite: THREE.Sprite; life: number; size: number }[] = [];
   private blastCursor = 0;
@@ -167,6 +170,18 @@ export class Effects {
         scene.add(sprite);
         this.smoke.push({ sprite, life: 0, grow: 1 });
       }
+    }
+    const ballGeo = new THREE.SphereGeometry(3.2, 10, 8);
+    const ballMat = new THREE.MeshLambertMaterial({ color: 0x3d5a2a });
+    const blinkTex = radialTexture("rgba(255,80,60,1)", "rgba(255,40,20,0)");
+    for (let i = 0; i < MAX_GRENADES; i++) {
+      const ball = new THREE.Mesh(ballGeo, ballMat);
+      const blink = new THREE.Sprite(new THREE.SpriteMaterial({ map: blinkTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+      blink.scale.setScalar(7);
+      ball.visible = blink.visible = false;
+      ball.frustumCulled = blink.frustumCulled = false;
+      scene.add(ball, blink);
+      this.grenades.push({ ball, blink });
     }
     const fireTex = radialTexture("rgba(255,245,210,1)", "rgba(255,90,20,0)");
     for (let i = 0; i < MAX_BLASTS; i++) {
@@ -282,7 +297,20 @@ export class Effects {
     dt: number,
     tracers: { head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[],
     rockets: { id: number; head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[] = [],
+    grenades: { pos: THREE.Vector3; fuseLeft: number }[] = [],
   ) {
+    for (let i = 0; i < MAX_GRENADES; i++) {
+      const g = this.grenades[i];
+      const t = grenades[i];
+      g.ball.visible = g.blink.visible = !!t;
+      if (!t) continue;
+      g.ball.position.copy(t.pos);
+      g.ball.rotation.x += dt * 8;
+      g.blink.position.copy(t.pos).z += 3;
+      // Blinks faster as the fuse runs down.
+      const rate = 2 + 10 * Math.max(0, 1 - t.fuseLeft / 2);
+      g.blink.visible = Math.sin(t.fuseLeft * rate * Math.PI * 2) > 0;
+    }
     this.flashTime = Math.max(0, this.flashTime - dt);
     for (const b of this.beams) {
       if (b.life <= 0) continue;

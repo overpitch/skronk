@@ -15,7 +15,9 @@ export type SimEvent =
   | { type: "weaponSwitch"; player: PlayerId; weapon: WeaponId }
   /** An instant shot's path (railgun), from the eye, in pieces where it went through portals. */
   | { type: "trail"; player: PlayerId; weapon: WeaponId; segments: [Vec3, Vec3][] }
-  /** A rocket went off. */
+  /** A grenade bounced off a wall or floor. */
+  | { type: "bounce"; projectile: number; pos: Vec3 }
+  /** A rocket or grenade went off. */
   | { type: "explosion"; owner: PlayerId; weapon: WeaponId; pos: Vec3; radius: number }
   /** A shot went into portal `from` at `pos` and came out of `to` at `exit`. */
   | { type: "shotThroughPortal"; projectile: number; from: number; to: number; pos: Vec3; exit: Vec3 }

@@ -39,8 +39,8 @@ export const PERSONALITIES: readonly Personality[] = [
   },
   {
     name: "Blitz",
-    style: "loves rockets",
-    weaponBias: { rocketlauncher: 0.4, railgun: -0.15 },
+    style: "loves rockets and grenades",
+    weaponBias: { rocketlauncher: 0.4, grenadelauncher: 0.35, railgun: -0.15 },
     rangeScale: 1,
     retreatHealth: 35,
     chaseScale: 1.4,

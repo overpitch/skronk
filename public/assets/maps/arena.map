@@ -246,6 +246,10 @@
 "origin" "0 -400 17"
 }
 {
+"classname" "pickup_grenadelauncher"
+"origin" "-680 300 17"
+}
+{
 "classname" "light"
 "origin" "-384 0 380"
 "light" "450"
