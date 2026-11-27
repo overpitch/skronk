@@ -4,6 +4,17 @@
  */
 import type { PlayerId, SimEvent } from "../sim/events";
 import type { Vec3 } from "../math/vec3";
+import { MOVE } from "../sim/movement";
+import type { World } from "../sim/world";
+import type { Announcement } from "./hud";
+
+/** Ground covered per footstep, map units. */
+const STRIDE = 110;
+/** Footsteps are only heard above this speed (walking quietly is a choice), and landings from this fall speed. */
+const STEP_SPEED = MOVE.maxSpeed * 0.6;
+const LAND_SPEED = 300;
+/** At or below this health your heart pounds. */
+const HEARTBEAT_HEALTH = 25;
 
 const HEARING_DISTANCE = 1600;
 
@@ -12,6 +23,9 @@ export class Sfx {
   private master!: GainNode;
   private volume = 1;
   private noise!: AudioBuffer;
+  /** Per player: ground covered since the last footstep, whether on the ground and how fast falling last frame. */
+  private feet = new Map<PlayerId, { travelled: number; onGround: boolean; fall: number; x: number; y: number }>();
+  private heartTime = 0;
 
   /** 0 silent, 1 full. */
   setVolume(volume: number) {
@@ -69,7 +83,10 @@ export class Sfx {
         case "hit":
           if (e.weapon === "fists") this.thud(...at(e.pos));
           if (e.attacker === localId && e.victim !== localId) this.tone("sine", 1500, 1300, 0.06, 0.25); // hit marker
-          if (e.victim === localId) this.hurt();
+          if (e.victim === localId) {
+            this.hurt();
+            if (e.saved > 0) this.armorHit();
+          }
           break;
         case "kill":
           if (e.attacker === localId && e.victim !== localId) {
@@ -91,7 +108,7 @@ export class Sfx {
           this.tone("square", 880, 880, 0.2, 0.12, 0.15);
           break;
         case "pickup":
-          if (e.player === localId) this.tone("sine", 520, 1250, 0.14, 0.3);
+          if (e.player === localId) this.pickup(e.kind);
           break;
         case "respawn":
           if (e.player === localId) this.tone("sine", 300, 600, 0.25, 0.2);
@@ -114,6 +131,111 @@ export class Sfx {
           break;
       }
     }
+  }
+
+  /**
+   * Per frame, from the world as it stands: footsteps of anyone running on the
+   * ground (so you hear a bot coming), landing thumps, and your heartbeat when
+   * you're nearly dead.
+   */
+  movement(world: World, localId: PlayerId, ear: Vec3, yaw: number, dt: number) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== "running") return;
+    for (const id of this.feet.keys()) if (!world.players.has(id)) this.feet.delete(id);
+    for (const p of world.players.values()) {
+      let f = this.feet.get(p.id);
+      if (!f) this.feet.set(p.id, (f = { travelled: 0, onGround: p.onGround, fall: 0, x: p.origin.x, y: p.origin.y }));
+      const moved = Math.hypot(p.origin.x - f.x, p.origin.y - f.y);
+      f.x = p.origin.x;
+      f.y = p.origin.y;
+      if (!p.alive || moved > 200) {
+        // Dead, or a teleport: no steps for that.
+        f.travelled = 0;
+        f.onGround = p.onGround;
+        continue;
+      }
+      const [gain, pan] = p.id === localId ? [0.45, 0] : this.place(p.origin, ear, yaw);
+      if (p.onGround && !f.onGround && f.fall > LAND_SPEED) this.land(gain, pan, Math.min(1, f.fall / 800));
+      const speed = Math.hypot(p.velocity.x, p.velocity.y);
+      if (p.onGround && speed > STEP_SPEED) {
+        f.travelled += moved;
+        if (f.travelled >= STRIDE) {
+          f.travelled = 0;
+          this.step(gain, pan);
+        }
+      }
+      f.onGround = p.onGround;
+      f.fall = p.onGround ? 0 : Math.max(f.fall, -p.velocity.z);
+    }
+    const me = world.players.get(localId);
+    this.heartTime -= dt;
+    if (me && me.alive && me.health <= HEARTBEAT_HEALTH && this.heartTime <= 0) {
+      this.heartTime = 0.85;
+      this.tone("sine", 70, 45, 0.12, 0.5);
+      this.tone("sine", 65, 40, 0.1, 0.35, 0.18);
+    }
+  }
+
+  /** The big calls: rising for good news, falling for bad, a tick for the clock. */
+  announce(said: readonly Announcement[]) {
+    if (!this.ctx || this.ctx.state !== "running") return;
+    for (const kind of said) {
+      const notes: Record<Announcement, number[]> = {
+        lead: [523, 659, 784],
+        tied: [523, 587],
+        lostLead: [622, 523, 415],
+        fragsLeft: [784, 988, 1175, 1568],
+        rivalFragsLeft: [494, 415, 349],
+        minute: [880, 880],
+        tenSeconds: [988, 740],
+      };
+      notes[kind].forEach((f, i) => this.tone("triangle", f, f, 0.16, 0.22, i * 0.11));
+    }
+  }
+
+  /** A pickup, by kind: health warm and rising, armor a metal clank, ammo a click-clack, a weapon a heavy rack. */
+  private pickup(kind: string) {
+    const dest = this.out(1, 0);
+    switch (kind) {
+      case "health":
+        this.tone("sine", 440, 880, 0.18, 0.3);
+        this.tone("sine", 660, 1320, 0.14, 0.18, 0.06);
+        break;
+      case "armor":
+        this.tone("square", 220, 210, 0.08, 0.12);
+        this.noiseBurst(dest, "bandpass", 3200, 2400, 0.12, 0.6, 6);
+        this.tone("triangle", 1250, 1200, 0.25, 0.12, 0.03);
+        break;
+      case "ammo":
+        this.noiseBurst(dest, "highpass", 3000, 2500, 0.03, 0.6);
+        this.noiseBurst(dest, "highpass", 2400, 2000, 0.04, 0.6, 0.8, 0.09);
+        break;
+      default: // a weapon
+        this.noiseBurst(dest, "bandpass", 1400, 700, 0.08, 0.8, 2);
+        this.noiseBurst(dest, "bandpass", 900, 500, 0.1, 0.9, 2, 0.14);
+        this.tone("square", 110, 90, 0.08, 0.15, 0.14);
+    }
+  }
+
+  /** A footstep: a short soft thud. */
+  private step(gain: number, pan: number) {
+    if (gain <= 0.01) return;
+    const dest = this.out(gain * (0.8 + Math.random() * 0.3), pan);
+    this.noiseBurst(dest, "lowpass", 700 + Math.random() * 200, 200, 0.07, 0.55, 0.7);
+  }
+
+  /** Landing from a fall: a heavier thud, bigger for a bigger drop. */
+  private land(gain: number, pan: number, size: number) {
+    if (gain <= 0.01) return;
+    const dest = this.out(gain, pan);
+    this.noiseBurst(dest, "lowpass", 600, 120, 0.14, 0.5 + size * 0.6, 0.7);
+    this.drop(dest, 110, 45, 0.12, 0.4 + size * 0.5);
+  }
+
+  /** Armor taking a hit: a bright metal ping over the hurt sound. */
+  private armorHit() {
+    this.tone("triangle", 1900, 1700, 0.12, 0.16);
+    this.noiseBurst(this.out(1, 0), "bandpass", 4200, 3000, 0.06, 0.4, 5);
   }
 
   /** [gain, pan] for a sound at pos: quieter with distance, panned by direction. */

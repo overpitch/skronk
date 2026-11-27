@@ -230,6 +230,70 @@ body {
   letter-spacing: 0.1em;
 }
 
+/* Big announcements (lead taken, frags left, time): upper middle, above the centre message. */
+#announce {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 20%;
+  text-align: center;
+  pointer-events: none;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffd75a;
+  text-shadow: 0 2px 6px #000;
+  opacity: 0;
+}
+#announce.bad {
+  color: #ff7a6a;
+}
+
+/* Hit direction: red arcs round the crosshair pointing where hits came from. */
+#hit-dirs {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+#hit-dirs .arc {
+  position: absolute;
+  left: -130px;
+  top: -130px;
+  width: 260px;
+  height: 260px;
+  opacity: 0;
+}
+
+/* Who fragged whom, top right, fading out. */
+#kill-feed {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+  font-size: 15px;
+  text-shadow: 0 2px 4px #000;
+}
+#kill-feed .line {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+}
+#kill-feed .line.me {
+  background: rgba(255, 215, 90, 0.25);
+}
+#kill-feed .weapon {
+  opacity: 0.7;
+  margin: 0 6px;
+}
+
 /* Scores: held Tab / View, or while you're dead. */
 #scoreboard {
   position: fixed;

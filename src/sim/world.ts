@@ -698,7 +698,7 @@ export class World {
       }
       let amount = p === direct ? spec.damage : sp.damage * factor;
       if (p.id === owner) amount *= sp.selfDamage;
-      this.damage(p, owner, Math.max(1, Math.round(amount)), p === direct ? pos : centre, push, spec.id, projectile);
+      this.damage(p, owner, Math.max(1, Math.round(amount)), p === direct ? pos : centre, push, spec.id, projectile, scale(normalize(away), -1));
     }
   }
 
@@ -719,7 +719,7 @@ export class World {
     }
     const flat = normalize(vec3(dir.x, dir.y, 0));
     const push = vec3(flat.x * spec.knockback * pellets, flat.y * spec.knockback * pellets, spec.lift);
-    this.damage(victim, attacker, amount, pos, push, spec.id, projectile);
+    this.damage(victim, attacker, amount, pos, push, spec.id, projectile, scale(normalize(dir), -1));
   }
 
   private outsideLevel(v: Vec3): boolean {
@@ -729,13 +729,14 @@ export class World {
   }
 
   /** Damage (armor soaks up its share) and a push (`push` is added to their velocity). */
-  private damage(victim: PlayerState, attacker: PlayerId, amount: number, pos: Vec3, push: Vec3, weapon: WeaponId, projectile: number) {
+  /** `from`: unit direction back the way the hit came (towards the shooter, the blast, or the portal it came out of). */
+  private damage(victim: PlayerState, attacker: PlayerId, amount: number, pos: Vec3, push: Vec3, weapon: WeaponId, projectile: number, from: Vec3) {
     if (!victim.alive) return;
     const saved = Math.min(victim.armor, Math.ceil(amount * VITALS.armorAbsorb));
     victim.armor -= saved;
     victim.health -= amount - saved;
     add(victim.velocity, push, victim.velocity);
-    this.events.push({ type: "hit", projectile, attacker, victim: victim.id, weapon, damage: amount, pos: clone(pos) });
+    this.events.push({ type: "hit", projectile, attacker, victim: victim.id, weapon, damage: amount, saved, pos: clone(pos), from });
     if (victim.health <= 0) this.kill(victim, attacker, weapon);
   }
 

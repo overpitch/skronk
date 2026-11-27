@@ -337,3 +337,37 @@ describe("fists against the machine gun", () => {
     expect(chooseWeapon(me, 40)).toBe(MACHINE_GUN);
   });
 });
+
+describe("where hits come from", () => {
+  it("a hit points back at the shooter, and says what armor took", () => {
+    const { world, b } = duel(400);
+    b.armor = 50;
+    const events = run(world, 25, { 1: { fire: true } });
+    const hit = hitsOn(events, 2)[0];
+    expect(hit?.type).toBe("hit");
+    if (hit?.type !== "hit") return;
+    expect(hit.from.x).toBeCloseTo(-1, 2); // the shooter is to the west
+    const soaked = hitsOn(events, 2).reduce((sum, e) => sum + (e.type === "hit" ? e.saved : 0), 0);
+    expect(soaked).toBe(50 - b.armor);
+    expect(hit.saved).toBeGreaterThan(0);
+  });
+
+  it("through a portal, it points at the portal the shot came out of", () => {
+    const { world, a, b } = duel();
+    place(a, 0, 25);
+    const portal = (yaw: number) => {
+      a.portalCooldown = 0;
+      run(world, 1, { 1: { yaw, portal: true } });
+      run(world, 1, { 1: { yaw } });
+    };
+    portal(Math.atan2(200, 512)); // east wall, y 200
+    portal(Math.atan2(-150, -512)); // west wall, y -150
+    place(b, -400, -150 + (175 / 512) * 112);
+    arm(a, RAILGUN);
+    const hit = hitsOn(run(world, 1, { 1: { fire: true, yaw: Math.atan2(175, 512) } }), 2)[0];
+    expect(hit?.type).toBe("hit");
+    if (hit?.type !== "hit") return;
+    // Out of the west wall heading east: it came from the west.
+    expect(hit.from.x).toBeLessThan(-0.9);
+  });
+});

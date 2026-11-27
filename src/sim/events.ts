@@ -21,8 +21,12 @@ export type SimEvent =
   | { type: "shotThroughPortal"; projectile: number; from: number; to: number; pos: Vec3; exit: Vec3 }
   /** A shot hit level geometry (`projectile` -1 for an instant shot or a punch). */
   | { type: "impact"; projectile: number; owner: PlayerId; weapon: WeaponId; pos: Vec3; normal: Vec3 }
-  /** A shot, blast or punch hurt a player. `damage` is before armor. A shotgun blast is one hit, all pellets together. */
-  | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; weapon: WeaponId; damage: number; pos: Vec3 }
+  /**
+   * A shot, blast or punch hurt a player. `damage` is before armor, `saved` what armor took of it.
+   * A shotgun blast is one hit, all pellets together. `from`: unit direction back the way it came
+   * (towards the shooter, the blast, or the portal the shot came out of).
+   */
+  | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; weapon: WeaponId; damage: number; saved: number; pos: Vec3; from: Vec3 }
   /** A shot hit a player under spawn protection: no damage. */
   | { type: "shielded"; projectile: number; attacker: PlayerId; victim: PlayerId; pos: Vec3 }
   /** Someone won (frag limit, or the lead when time ran out). Everything holds still until a rematch. */

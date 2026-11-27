@@ -240,6 +240,11 @@ async function start() {
   };
   // Click goes round 0..MAX; the controller's LB / RB step down and up.
   onClick(botButton, () => changeBots((fighters.length + 1) % (MAX_BOTS + 1)));
+  // Right-click: one fewer (from none, round to the most).
+  botButton.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    changeBots((fighters.length + MAX_BOTS) % (MAX_BOTS + 1));
+  });
   input.onChangeBots = (delta) => changeBots(fighters.length + delta);
   // Another map: saved, then the page reloads with it (a fresh match).
   const changeMap = (delta: number) => {
@@ -454,11 +459,13 @@ async function start() {
     const time = now / 1000;
     renderer.render({ world, localId, alpha, eye, yaw: input.yaw, pitch: input.pitch, timeSeconds: time, dt, predictedFire: !!net }, frameEvents);
     if (firedNow) renderer.localShot(firedWeapon);
-    hud.update(world, me, frameEvents, dt, input.scoresHeld);
+    const said = hud.update(world, me, frameEvents, dt, input.scoresHeld);
     // In a network game your shot's sound plays when you fire, not when the server's word comes back.
     const heard = net ? frameEvents.filter((e) => !(e.type === "fire" && e.player === localId)) : frameEvents;
     if (firedNow) heard.push({ type: "fire", player: localId, weapon: firedWeapon, projectile: -1, origin: { ...eye }, dir: { x: 0, y: 0, z: 0 } });
     sfx.play(heard, localId, eye, input.yaw);
+    sfx.announce(said);
+    if (active) sfx.movement(world, localId, eye, input.yaw, dt);
 
     fpsFrames++;
     fpsTime += dt;
