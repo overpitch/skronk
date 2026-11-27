@@ -49,6 +49,20 @@ export function captureSnapshot(world: World): WorldSnapshot {
       weapon: pr.weapon,
       fuse: pr.fuse,
     })),
+    monsters: world.monsters.map((m) => ({
+      id: m.id,
+      kind: m.kind,
+      origin: v3(m.origin),
+      prev: v3(m.prevOrigin),
+      velocity: v3(m.velocity),
+      yaw: m.yaw,
+      onGround: m.onGround,
+      health: m.health,
+      alive: m.alive,
+      windup: m.windup,
+      attackCooldown: m.attackCooldown,
+      diedTick: m.diedTick,
+    })),
     portals: world.portals.map((p) => ({ ...p })),
     pickups: world.pickups.map((pk) => pk.availableAtTick),
     events: world.events,
@@ -96,6 +110,27 @@ export function applySnapshot(world: World, snap: WorldSnapshot) {
       hops: s.hops,
       weapon: s.weapon,
       fuse: s.fuse,
+    });
+  }
+  world.monsters.length = 0;
+  for (const s of snap.monsters ?? []) {
+    world.monsters.push({
+      id: s.id,
+      kind: s.kind,
+      origin: into(vec3(), s.origin),
+      prevOrigin: into(vec3(), s.prev),
+      velocity: into(vec3(), s.velocity),
+      onGround: s.onGround,
+      groundNormal: vec3(0, 0, 1),
+      yaw: s.yaw,
+      pitch: 0,
+      health: s.health,
+      alive: s.alive,
+      windup: s.windup,
+      attackCooldown: s.attackCooldown,
+      diedTick: s.diedTick,
+      team: -1,
+      protectedUntil: 0,
     });
   }
   world.restorePortals(snap.portals);

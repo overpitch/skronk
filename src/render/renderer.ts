@@ -17,6 +17,8 @@ import { FIZZLE_COLOR, portalColor } from "./portalColors";
 import { TextureLibrary } from "./textures";
 import { ViewModel } from "./viewmodel";
 import { visibleSurfaces } from "../level/visibleSurfaces";
+import { MonsterModels } from "./monsters";
+import { isMonsterId } from "../sim/monsters";
 import { WEAPONS, type WeaponId } from "../sim/weapons";
 
 /** Pickup shapes and colours: a spinning gem for health, armor and ammo, a little gun for weapons. */
@@ -71,6 +73,7 @@ export class GameRenderer {
   private effects: Effects;
   private players: PlayerModels;
   private viewModel: ViewModel;
+  private monsters: MonsterModels;
   private portals: PortalViews;
   private pickupMeshes: THREE.Object3D[] = [];
   /** Local shots: offset from true path to the gun muzzle at the moment of firing. */
@@ -109,6 +112,7 @@ export class GameRenderer {
     this.effects = new Effects(this.scene, quality);
     this.players = new PlayerModels(this.scene, quality.detailedBodies, quality.shadows, quality.detailedWeapons);
     this.viewModel = new ViewModel(quality.detailedWeapons);
+    this.monsters = new MonsterModels(this.scene, quality.detailedBodies, quality.shadows);
     this.portals = new PortalViews(this.scene, {
       maxViews: quality.maxPortalViews,
       scale: quality.portalViewScale,
@@ -256,6 +260,7 @@ export class GameRenderer {
       });
     }
     this.players.update(dt);
+    this.monsters.update(world.monsters, alpha, world.tick, dt);
 
     // Tracers and rockets: interpolated, with local shots easing in from the gun muzzle.
     const tracers: { head: THREE.Vector3; dir: THREE.Vector3; travelled: number }[] = [];
@@ -401,7 +406,8 @@ export class GameRenderer {
           if (e.victim !== localId) this.effects.playerImpact(new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z), this.v2.copy(this.forward));
           break;
         case "hit":
-          this.players.hit(e.victim);
+          if (isMonsterId(e.victim)) this.monsters.hit(e.victim);
+          else this.players.hit(e.victim);
           if (e.victim === localId) {
             this.punchPitch += 0.02;
             this.punchYaw += (Math.random() - 0.5) * 0.04;

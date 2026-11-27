@@ -66,6 +66,11 @@ export class Sfx {
           else this.shot(gain, pan);
           break;
         }
+        case "monsterAttack": {
+          const m = this.monsterAt(e.monster);
+          if (m) this.snarl(...at(m));
+          break;
+        }
         case "bounce":
           this.clink(...at(e.pos));
           break;
@@ -171,6 +176,15 @@ export class Sfx {
       f.onGround = p.onGround;
       f.fall = p.onGround ? 0 : Math.max(f.fall, -p.velocity.z);
     }
+    // The horde: where each monster is (for their snarls), and the odd groan from one near you.
+    this.monsterSpots.clear();
+    for (const m of world.monsters) if (m.alive) this.monsterSpots.set(m.id, m.origin);
+    this.groanTime -= dt;
+    if (this.groanTime <= 0 && this.monsterSpots.size > 0) {
+      this.groanTime = 0.6 + Math.random() * 1.2;
+      const near = [...this.monsterSpots.values()].filter((p) => Math.hypot(p.x - ear.x, p.y - ear.y) < 1200);
+      if (near.length) this.groan(...this.place(near[Math.floor(Math.random() * near.length)], ear, yaw));
+    }
     const me = world.players.get(localId);
     this.heartTime -= dt;
     if (me && me.alive && me.health <= HEARTBEAT_HEALTH && this.heartTime <= 0) {
@@ -192,6 +206,8 @@ export class Sfx {
         rivalFragsLeft: [494, 415, 349],
         minute: [880, 880],
         tenSeconds: [988, 740],
+        wave: [196, 196, 262],
+        waveCleared: [523, 659, 784, 1047],
       };
       notes[kind].forEach((f, i) => this.tone("triangle", f, f, 0.16, 0.22, i * 0.11));
     }
@@ -362,6 +378,30 @@ export class Sfx {
     const dest = this.out(gain, pan);
     this.drop(dest, 90, 45, 0.18, 0.9);
     this.noiseBurst(dest, "bandpass", 300, 1400, 0.45, 0.7, 1.2);
+  }
+
+  /** Where each monster is, for its sounds (set each frame by movement()). */
+  private monsterSpots = new Map<number, Vec3>();
+  private groanTime = 0;
+  private monsterAt(id: number): Vec3 | undefined {
+    return this.monsterSpots.get(id);
+  }
+
+  /** A monster winding up a swipe: a rough snarl. */
+  private snarl(gain: number, pan: number) {
+    if (gain <= 0.01) return;
+    const dest = this.out(gain, pan);
+    this.drop(dest, 150, 90, 0.35, 0.5, "sawtooth");
+    this.noiseBurst(dest, "bandpass", 600, 300, 0.3, 0.4, 3);
+  }
+
+  /** A monster groaning, now and then: low, wavering. */
+  private groan(gain: number, pan: number) {
+    if (gain <= 0.01) return;
+    const dest = this.out(gain * 0.6, pan);
+    const f = 70 + Math.random() * 40;
+    this.drop(dest, f * 1.3, f, 0.8, 0.45, "sawtooth");
+    this.noiseBurst(dest, "bandpass", 400, 250, 0.7, 0.25, 4);
   }
 
   /** Grenade launcher: a hollow pop. */

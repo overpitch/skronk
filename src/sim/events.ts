@@ -5,6 +5,7 @@
 import type { Vec3 } from "../math/vec3";
 import type { WeaponId } from "./weapons";
 
+/** A player's id, or a monster's in events that can name either (monster ids start at MONSTER_ID_BASE). */
 export type PlayerId = number;
 
 export type SimEvent =
@@ -28,11 +29,17 @@ export type SimEvent =
    * A shotgun blast is one hit, all pellets together. `from`: unit direction back the way it came
    * (towards the shooter, the blast, or the portal the shot came out of).
    */
-  | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; weapon: WeaponId; damage: number; saved: number; pos: Vec3; from: Vec3 }
+  | { type: "hit"; projectile: number; attacker: PlayerId; victim: PlayerId; weapon: WeaponId | null; damage: number; saved: number; pos: Vec3; from: Vec3 }
   /** A shot hit a player under spawn protection: no damage. */
   | { type: "shielded"; projectile: number; attacker: PlayerId; victim: PlayerId; pos: Vec3 }
   /** Someone won (frag limit, or the lead when time ran out). Everything holds still until a rematch. */
-  | { type: "matchOver"; winner: PlayerId }
+  /** In Horde mode the horde wins: winner null. */
+  | { type: "matchOver"; winner: PlayerId | null }
+  /** Horde mode: a wave begins (everyone who was down is back), or has been beaten. */
+  | { type: "waveStart"; wave: number }
+  | { type: "waveCleared"; wave: number }
+  /** A monster started a swipe (it lands `windup` ticks later). */
+  | { type: "monsterAttack"; monster: number }
   /** Time ran out with the lead tied: the next frag that breaks the tie wins. */
   | { type: "suddenDeath" }
   /** A new match began: scores reset, everyone respawned. */

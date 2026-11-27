@@ -10,6 +10,7 @@ import type { PlayerId, SimEvent } from "../sim/events";
 import type { MatchState } from "../sim/match";
 import type { Portal } from "../sim/portals";
 import type { WeaponId } from "../sim/weapons";
+import type { MonsterKind } from "../sim/monsters";
 
 /** The game server's port; browsers on the same network join ws://<host>:GAME_PORT. */
 export const GAME_PORT = 5175;
@@ -54,6 +55,21 @@ export interface ProjectileSnap {
   fuse?: number;
 }
 
+export interface MonsterSnap {
+  id: number;
+  kind: MonsterKind;
+  origin: V3;
+  prev: V3;
+  velocity: V3;
+  yaw: number;
+  onGround: boolean;
+  health: number;
+  alive: boolean;
+  windup: number;
+  attackCooldown: number;
+  diedTick: number;
+}
+
 /** Everything a client needs to draw one tick of the world. */
 export interface WorldSnapshot {
   tick: number;
@@ -61,6 +77,8 @@ export interface WorldSnapshot {
   match: MatchState;
   players: PlayerSnap[];
   projectiles: ProjectileSnap[];
+  /** Horde mode's monsters (empty otherwise). */
+  monsters: MonsterSnap[];
   portals: Portal[];
   /** Each pickup's availableAtTick, in level order. */
   pickups: number[];

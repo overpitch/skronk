@@ -15,6 +15,10 @@
     ]
 ]
 
+@PointClass size(-16 -16 -24, 16 16 32) color(125 138 99) = monster_spawn : "Horde mode: where monsters come in (without any, they use the player spawns)"
+[
+]
+
 @PointClass size(-16 -16 -16, 16 16 16) color(255 80 80) = pickup_health : "Health pickup"
 [
     amount(integer) : "Amount" : 25

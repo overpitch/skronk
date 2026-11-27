@@ -172,8 +172,17 @@ export class NavGraph {
     return cost;
   }
 
-  /** Ticks to get from every node to `to` on foot (Infinity where you can't). */
-  costsTo(to: number): Float64Array {
+  /** Ticks to get from every node to `to` (Infinity where you can't), on foot and through `extra` edges (open portals). */
+  costsTo(to: number, extra: ExtraEdges = NO_EXTRA): Float64Array {
+    // Extra edges, turned round: into each node, from where.
+    const extraIn = new Map<number, { from: number; cost: number }[]>();
+    for (const [from, edges] of extra) {
+      for (const e of edges) {
+        const list = extraIn.get(e.to);
+        if (list) list.push({ from, cost: e.cost });
+        else extraIn.set(e.to, [{ from, cost: e.cost }]);
+      }
+    }
     if (!this.reverse) {
       this.reverse = this.nodes.map(() => []);
       this.nodes.forEach((n, a) => n.edges.forEach((e) => this.reverse![e.to].push({ from: a, cost: e.cost })));
@@ -186,7 +195,8 @@ export class NavGraph {
     while (open.size > 0) {
       const id = open.pop();
       const base = cost[id];
-      for (const e of this.reverse[id]) {
+      const through = extraIn.get(id);
+      for (const e of through ? [...this.reverse[id], ...through] : this.reverse[id]) {
         const c = base + e.cost;
         if (c >= cost[e.from]) continue;
         cost[e.from] = c;

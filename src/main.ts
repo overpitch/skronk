@@ -2,6 +2,8 @@ import maps from "virtual:maps";
 import { buildNavGraph, type NavGraph } from "./bots/nav";
 import { Bot } from "./bots/bot";
 import { personalityFor } from "./bots/personality";
+import { MonsterDirector } from "./bots/monsterDirector";
+import { isMonsterId, MONSTERS } from "./sim/monsters";
 import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
@@ -99,7 +101,12 @@ async function start() {
           timeLimitTicks: secondsToTicks(Math.max(0, Number(params.get("timelimit")) || 0) * 60),
         }
       : null;
-  const rulesFor = (botsPlaying: number): MatchRules => rulesParam ?? (botsPlaying > 0 ? matchPreset(settings.match).rules : FREE_PLAY);
+  // Horde is played with or without bots (they fight on your side); the other rules only with bots.
+  const rulesFor = (botsPlaying: number): MatchRules => {
+    if (rulesParam) return rulesParam;
+    const preset = matchPreset(settings.match).rules;
+    return preset.mode === "horde" || botsPlaying > 0 ? preset : FREE_PLAY;
+  };
   const world = new World(level, rulesFor(botCount));
   // In a network game this is a mirror of the server's world, overwritten by every snapshot.
   const me = world.addPlayer(localId);
@@ -111,7 +118,7 @@ async function start() {
   const names = new Map<PlayerId, string>([[localId, "yourself"]]);
   let nextId = LOCAL_PLAYER + 1;
   let nav: NavGraph | null = null;
-  if (botCount > 0 || navDebug) {
+  if (botCount > 0 || navDebug || world.horde) {
     status.textContent = `Mapping ${mapTitle} for bots…`;
     await new Promise((r) => setTimeout(r)); // let the status show before the build blocks
     nav = buildNavGraph(level, world.collision);
@@ -135,7 +142,7 @@ async function start() {
     if (n > 0 && !nav) nav = buildNavGraph(level, world.collision);
     resize(fighters, n, (id) => new Bot(id, nav!, botSkillLevel(), personalityFor(fighters.length)));
     fighters.forEach((b) => names.set(b.id, b.personality.name));
-    const dummyCount = dummiesParam ?? (n > 0 ? 0 : 1);
+    const dummyCount = dummiesParam ?? (n > 0 || rulesFor(n).mode === "horde" ? 0 : 1);
     resize(dummies, dummyCount, (id) => new TargetDummy(id, dummiesShoot, dummySpeed));
     dummies.forEach((d, i) => names.set(d.id, dummyCount > 1 ? `Dummy ${i + 1}` : "the dummy"));
     bots.length = 0;
@@ -143,10 +150,26 @@ async function start() {
     // Bots joining practice (or all leaving) changes the rules: a fresh match.
     const rules = rulesFor(n);
     const now = world.match.rules;
-    if (!net && (rules.fragLimit !== now.fragLimit || rules.timeLimitTicks !== now.timeLimitTicks)) world.rematch(rules);
+    if (!net && (rules.fragLimit !== now.fragLimit || rules.timeLimitTicks !== now.timeLimitTicks || (rules.mode ?? "deathmatch") !== (now.mode ?? "deathmatch"))) {
+      world.rematch(rules);
+    }
   };
   setBots(botCount);
-  const nameOf = (id: PlayerId) => (id === localId ? "yourself" : (net?.names.get(id) ?? names.get(id) ?? `Player ${id}`));
+  const nameOf = (id: PlayerId) => {
+    if (isMonsterId(id)) {
+      const m = world.body(id);
+      return `a ${MONSTERS[m && "kind" in m ? m.kind : "shambler"].name.toLowerCase()}`;
+    }
+    return id === localId ? "yourself" : (net?.names.get(id) ?? names.get(id) ?? `Player ${id}`);
+  };
+  // Horde's monsters: moved by a director (on the game server in a network game).
+  let director: MonsterDirector | null = null;
+  const monsterCommands = () => {
+    if (!world.horde) return undefined;
+    if (!nav) nav = buildNavGraph(level, world.collision);
+    director ??= new MonsterDirector(nav);
+    return director.commands(world);
+  };
   // Graphics quality: ?quality=full|light for this visit, else the menu's setting (Auto picks for this device).
   const qualityParam = params.get("quality");
   const qualitySetting: QualitySetting = qualityParam === "full" || qualityParam === "light" ? qualityParam : settings.quality;
@@ -212,10 +235,15 @@ async function start() {
     invertButton.textContent = `Invert look: ${settings.invertLook ? "On" : "Off"}`;
     invertButton.setAttribute("aria-pressed", String(settings.invertLook));
     mapButton.textContent = `Map: ${mapTitle}`;
-    botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : "Bots: none (practice dummy)";
+    botButton.textContent = fighters.length > 0 ? `Bots: ${fighters.length}` : world.horde ? "Bots: none" : "Bots: none (practice dummy)";
     difficultyButton.textContent = `Difficulty: ${(difficultyOverride ?? difficultyOf(settings.difficulty)).label}`;
     const preset = matchPreset(settings.match).label;
-    matchButton.textContent = rulesParam ? "Match: set in the address" : fighters.length > 0 ? `Match: ${preset}` : `Match: ${preset} (when bots play)`;
+    const horde = matchPreset(settings.match).rules.mode === "horde";
+    matchButton.textContent = rulesParam
+      ? "Match: set in the address"
+      : fighters.length > 0 || horde
+        ? `Match: ${preset}`
+        : `Match: ${preset} (when bots play)`;
     const modeName = quality.profile.mode === "full" ? "Full" : "Light";
     graphicsButton.textContent = qualitySetting === "auto" ? `Graphics: Auto (${modeName})` : `Graphics: ${modeName}`;
     graphicsButton.title = `${modeName}: ${quality.reason}`;
@@ -290,7 +318,8 @@ async function start() {
     const i = MATCH_PRESETS.findIndex((m) => m.id === settings.match);
     settings.match = MATCH_PRESETS[(i + 1) % MATCH_PRESETS.length].id;
     saveSettings(settings);
-    if (!rulesParam && fighters.length > 0) world.rematch(rulesFor(fighters.length));
+    // A fresh match if the rules in play change (and the practice dummy goes in Horde).
+    if (!rulesParam) setBots(fighters.length);
     applySettings();
   };
   onClick(matchButton, cycleMatch);
@@ -483,7 +512,7 @@ async function start() {
         rematchHeld = press;
         const commands = new Map<PlayerId, PlayerCommand>([[localId, mine]]);
         for (const bot of bots) commands.set(bot.id, bot.command(world));
-        world.step(commands);
+        world.step(commands, monsterCommands());
         tickEvents.push(...world.events);
       }
       for (const e of tickEvents) {

@@ -7,8 +7,9 @@ import type { CollisionBrush, LevelData, SpawnPoint } from "../level/types";
 import { CollisionWorld, type Tracer } from "./collision";
 import { emptyCommand, type PlayerCommand } from "./command";
 import type { PlayerId, SimEvent } from "./events";
-import { EYE_HEIGHT, PLAYER_MAXS, PLAYER_MINS, playerMove, type MoveState } from "./movement";
-import { decideWinner, FREE_PLAY, newMatch, SPAWN_PROTECTION_TICKS, SPAWN_RAISE_TICKS, type MatchRules, type MatchState } from "./match";
+import { EYE_HEIGHT, MOVE, PLAYER_MAXS, PLAYER_MINS, playerMove, type MoveState } from "./movement";
+import { decideWinner, FREE_PLAY, HORDE, newMatch, SPAWN_PROTECTION_TICKS, SPAWN_RAISE_TICKS, waveSize, type MatchRules, type MatchState } from "./match";
+import { CORPSE_TICKS, isMonsterId, MONSTER_ID_BASE, MONSTERS, type MonsterCommand, type MonsterKind, type MonsterState } from "./monsters";
 import { applyPickup, createPickups, PICKUP_HALF_SIZE, type PickupState } from "./pickups";
 import {
   buildPassage,
@@ -56,10 +57,14 @@ const GOOD_SPAWN_SHARE = 0.6;
 const MAX_HITSCAN_HOPS = 8;
 const BODY_MIDDLE = (PLAYER_MINS.z + PLAYER_MAXS.z) / 2;
 
+/** Anything shots can hurt: a player or a monster. */
+export type Hittable = PlayerState | MonsterState;
+const isMonster = (b: Hittable): b is MonsterState => "kind" in b;
+
 /** What a shot moving in a straight line reaches first. */
 type Sweep =
   | { kind: "portal"; t: number; from: Portal; to: Portal }
-  | { kind: "player"; t: number; victim: PlayerState }
+  | { kind: "player"; t: number; victim: Hittable }
   | { kind: "wall"; t: number; pos: Vec3; normal: Vec3 }
   | { kind: "none" };
 
@@ -69,7 +74,7 @@ interface ShotPath {
   end: Vec3;
   /** Direction at the end (turned by any portals). */
   dir: Vec3;
-  victim: PlayerState | null;
+  victim: Hittable | null;
   /** Set if it stopped at a wall. */
   wallNormal: Vec3 | null;
 }
@@ -102,6 +107,8 @@ export class World {
   readonly collision: CollisionWorld;
   readonly players = new Map<PlayerId, PlayerState>();
   readonly projectiles: Projectile[] = [];
+  /** Horde mode's monsters, dead ones too until their corpses go. */
+  readonly monsters: MonsterState[] = [];
   readonly pickups: PickupState[];
   /** Every placed portal, all owners. At most two per owner. */
   readonly portals: Portal[] = [];
@@ -115,6 +122,7 @@ export class World {
   private spawnCursor = 0;
   private nextProjectileId = 1;
   private nextPortalId = 1;
+  private nextMonsterId = MONSTER_ID_BASE;
   /** Collision changes for walking through each portal, by portal id. */
   private passages = new Map<number, PortalPassage>();
 
@@ -134,6 +142,7 @@ export class World {
 
   private startMatch(rules: MatchRules) {
     this.projectiles.length = 0;
+    this.monsters.length = 0;
     this.removePortals(() => true);
     for (const pk of this.pickups) pk.availableAtTick = 0;
     this.match = newMatch(rules, this.tick);
@@ -203,6 +212,25 @@ export class World {
     }
   }
 
+  /** A player or monster by id (events name either). */
+  body(id: number): Hittable | undefined {
+    return isMonsterId(id) ? this.monsters.find((m) => m.id === id) : this.players.get(id);
+  }
+
+  get horde(): boolean {
+    return this.match.rules.mode === "horde";
+  }
+
+  /** Would these two fight? Monsters fight every player; in Horde, players are all on one side. */
+  areEnemies(a: { id: number; team: number }, b: { id: number; team: number }): boolean {
+    if (a.id === b.id) return false;
+    const am = isMonsterId(a.id);
+    const bm = isMonsterId(b.id);
+    if (am || bm) return am !== bm;
+    if (this.horde) return false;
+    return a.team === 0 || a.team !== b.team;
+  }
+
   /** Whose portal pair this player places into. Team modes can map players to a team key here. */
   portalOwnerOf(p: PlayerState): PortalOwner {
     return playerPortalOwner(p.id);
@@ -240,11 +268,12 @@ export class World {
     this.events.push({ type: "respawn", player: p.id });
   }
 
-  /** Commands missing for a player this tick are treated as "no input". */
-  step(commands: ReadonlyMap<PlayerId, PlayerCommand>) {
+  /** Commands missing for a player (or monster) this tick are treated as "no input". */
+  step(commands: ReadonlyMap<PlayerId, PlayerCommand>, monsterCommands: ReadonlyMap<number, MonsterCommand> = new Map()) {
     this.events = [];
     const killZ = this.level.mins.z - KILL_Z_MARGIN;
     for (const p of this.players.values()) copy(p.prevOrigin, p.origin);
+    for (const m of this.monsters) copy(m.prevOrigin, m.origin);
     if (this.pendingRematch) {
       this.startMatch(this.pendingRematch);
       this.pendingRematch = null;
@@ -273,15 +302,164 @@ export class World {
       this.updatePortalGun(p, cmd);
     }
 
+    this.stepMonsters(monsterCommands, killZ);
     this.stepProjectiles();
     this.collectPickups();
+    this.stepHorde();
     this.tick++;
     this.checkMatch();
+  }
+
+  /** Monsters: walk (through portals too), swipe whoever they reach after a wind-up, lie dead a while. */
+  private stepMonsters(commands: ReadonlyMap<number, MonsterCommand>, killZ: number) {
+    for (const m of this.monsters) {
+      if (!m.alive) continue;
+      const spec = MONSTERS[m.kind];
+      const cmd = commands.get(m.id);
+      const move: PlayerCommand = { ...emptyCommand(), yaw: cmd?.yaw ?? m.yaw };
+      // Rooted while a swipe winds up.
+      if (cmd && m.windup === 0) {
+        move.forward = Math.max(0, Math.min(1, cmd.forward)) * (spec.speed / MOVE.maxSpeed);
+        move.jump = cmd.jump;
+      }
+      this.movePlayer(m as unknown as PlayerState, move);
+      if (m.origin.z < killZ) {
+        this.killMonster(m, null, null);
+        continue;
+      }
+      if (m.attackCooldown > 0) m.attackCooldown--;
+      if (m.windup > 0) {
+        if (--m.windup === 0) this.landSwipe(m);
+      } else if (cmd?.attack && m.attackCooldown === 0) {
+        m.windup = spec.windupTicks;
+        m.attackCooldown = spec.cooldownTicks;
+        this.events.push({ type: "monsterAttack", monster: m.id });
+      }
+    }
+    // Corpses go after a while.
+    let kept = 0;
+    for (const m of this.monsters) if (m.alive || this.tick - m.diedTick < CORPSE_TICKS) this.monsters[kept++] = m;
+    this.monsters.length = kept;
+  }
+
+  /** A swipe landing: the nearest player in front of it and within reach takes it. */
+  private landSwipe(m: MonsterState) {
+    const spec = MONSTERS[m.kind];
+    const fx = Math.cos(m.yaw);
+    const fy = Math.sin(m.yaw);
+    let best: PlayerState | null = null;
+    let bestDist = Infinity;
+    for (const p of this.players.values()) {
+      if (!p.alive || this.tick < p.protectedUntil) continue;
+      const dx = p.origin.x - m.origin.x;
+      const dy = p.origin.y - m.origin.y;
+      const flat = Math.hypot(dx, dy);
+      if (flat > PLAYER_MAXS.x * 2 + spec.reach || Math.abs(p.origin.z - m.origin.z) > PLAYER_MAXS.z - PLAYER_MINS.z) continue;
+      if (flat > 1 && (dx * fx + dy * fy) / flat < 0.3) continue; // behind it
+      if (flat < bestDist) {
+        bestDist = flat;
+        best = p;
+      }
+    }
+    if (!best) return;
+    const dir = normalize(vec3(best.origin.x - m.origin.x, best.origin.y - m.origin.y, 0));
+    const pos = vec3(best.origin.x, best.origin.y, best.origin.z + BODY_MIDDLE);
+    this.damage(best, m.id, spec.damage, pos, scale(dir, spec.knockback), null, -1, scale(dir, -1));
+  }
+
+  /**
+   * Horde mode: start each wave (everyone who was down comes back), send its monsters
+   * in a few at a time, and when they're all dead, a breather before the next.
+   */
+  private stepHorde() {
+    const h = this.match.horde;
+    if (!h || this.match.phase !== "playing") return;
+    if (h.nextWaveTick > 0) {
+      if (this.tick < h.nextWaveTick) return;
+      h.wave++;
+      h.toSpawn = waveSize(h.wave);
+      h.nextWaveTick = 0;
+      h.nextSpawnTick = this.tick;
+      for (const p of [...this.players.values()].sort((a, b) => a.id - b.id)) if (!p.alive) this.respawn(p);
+      this.events.push({ type: "waveStart", wave: h.wave });
+    }
+    const alive = this.monsters.filter((m) => m.alive).length;
+    if (h.toSpawn > 0 && this.tick >= h.nextSpawnTick && alive < HORDE.maxAlive) {
+      if (this.spawnMonster("shambler")) h.toSpawn--;
+      h.nextSpawnTick = this.tick + HORDE.spawnEveryTicks;
+    }
+    if (h.toSpawn === 0 && alive === 0 && !this.monsters.some((m) => m.alive)) {
+      this.events.push({ type: "waveCleared", wave: h.wave });
+      h.nextWaveTick = this.tick + HORDE.breakTicks;
+    }
+  }
+
+  /**
+   * A new monster at a monster spawn point (or a player one, if the map has none):
+   * not on top of anyone, out of players' sight if possible, far from them, varied.
+   */
+  private spawnMonster(kind: MonsterKind): MonsterState | null {
+    const spots = this.level.monsterSpawns.length > 0 ? this.level.monsterSpawns : this.level.spawns.map((s) => s.origin);
+    const players = [...this.players.values()].filter((p) => p.alive);
+    const free = spots.filter((s) => !players.some((p) => boxesOverlap(p.origin, s)) && !this.monsters.some((m) => m.alive && boxesOverlap(m.origin, s)));
+    if (free.length === 0) return null;
+    const scores = free.map((s) => {
+      let score = Infinity;
+      for (const p of players) {
+        const d = Math.hypot(p.origin.x - s.x, p.origin.y - s.y, p.origin.z - s.z);
+        score = Math.min(score, this.canSeeSpot(p.origin, s) ? d * SEEN_SPAWN_FACTOR : d);
+      }
+      return players.length ? score : 1;
+    });
+    const best = Math.max(...scores);
+    const good = free.filter((_, i) => scores[i] >= best * GOOD_SPAWN_SHARE);
+    const at = good[hash3(this.tick, this.nextMonsterId, this.monsters.length) % good.length];
+    const target = players[0];
+    const m: MonsterState = {
+      id: this.nextMonsterId++,
+      kind,
+      origin: clone(at),
+      prevOrigin: clone(at),
+      velocity: vec3(),
+      onGround: false,
+      groundNormal: vec3(0, 0, 1),
+      yaw: target ? Math.atan2(target.origin.y - at.y, target.origin.x - at.x) : 0,
+      pitch: 0,
+      health: MONSTERS[kind].health,
+      alive: true,
+      attackCooldown: 0,
+      windup: 0,
+      diedTick: 0,
+      team: -1,
+      protectedUntil: 0,
+    };
+    this.monsters.push(m);
+    return m;
+  }
+
+  private killMonster(m: MonsterState, attacker: PlayerId | null, weapon: WeaponId | null) {
+    m.alive = false;
+    m.windup = 0;
+    m.diedTick = this.tick;
+    m.velocity.x = m.velocity.y = 0;
+    const killer = attacker === null ? undefined : this.players.get(attacker);
+    if (killer) killer.frags++;
+    this.events.push({ type: "kill", attacker, victim: m.id, weapon });
   }
 
   /** Ends the match if someone has won (or marks sudden death when time is up with the lead tied). */
   private checkMatch() {
     const m = this.match;
+    if (m.horde) {
+      // The horde wins when everyone is down at once.
+      if (m.phase !== "playing" || m.horde.wave === 0 || this.players.size === 0) return;
+      if ([...this.players.values()].some((p) => p.alive)) return;
+      m.phase = "over";
+      m.winner = null;
+      m.endTick = this.tick;
+      this.events.push({ type: "matchOver", winner: null });
+      return;
+    }
     if (m.phase !== "playing" || (m.rules.fragLimit <= 0 && m.rules.timeLimitTicks <= 0)) return;
     const scores = [...this.players.values()].map((p) => ({ id: p.id, frags: p.frags }));
     const { winner, suddenDeath } = decideWinner(m, this.tick, scores);
@@ -352,7 +530,7 @@ export class World {
     const right = vec3(Math.sin(p.yaw), -Math.cos(p.yaw), 0);
     const up = cross(right, dir);
     const turn = (hash3(this.tick, p.id, 7) % 6283) / 1000;
-    const struck = new Map<PlayerState, { pellets: number; pos: Vec3; dir: Vec3 }>();
+    const struck = new Map<Hittable, { pellets: number; pos: Vec3; dir: Vec3 }>();
     for (const [r, u] of pelletOffsets(spec, turn)) {
       const d = normalize(vec3(dir.x + right.x * r + up.x * u, dir.y + right.y * r + up.y * u, dir.z + right.z * r + up.z * u));
       const path = this.traceShot(p.id, eye, d, spec.range, spec.radius);
@@ -587,7 +765,7 @@ export class World {
     const tr = this.collision.traceBox(origin, end, POINT, POINT);
     const wallT = tr.startSolid ? 0 : tr.fraction;
     let hitT = wallT;
-    let victim: PlayerState | null = null;
+    let victim: Hittable | null = null;
     for (const p of this.players.values()) {
       if ((p.id === owner && hops === 0) || !p.alive) continue;
       add(p.origin, PLAYER_MINS, boxMin);
@@ -598,6 +776,18 @@ export class World {
       if (t >= 0 && t <= hitT) {
         hitT = t;
         victim = p;
+      }
+    }
+    for (const m of this.monsters) {
+      if (!m.alive) continue;
+      add(m.origin, PLAYER_MINS, boxMin);
+      add(m.origin, PLAYER_MAXS, boxMax);
+      boxMin.x -= radius; boxMin.y -= radius; boxMin.z -= radius;
+      boxMax.x += radius; boxMax.y += radius; boxMax.z += radius;
+      const t = segmentVsBox(origin, delta, boxMin, boxMax);
+      if (t >= 0 && t <= hitT) {
+        hitT = t;
+        victim = m;
       }
     }
 
@@ -704,10 +894,10 @@ export class World {
    * else in reach, with nothing solid in between, takes splash falling off with distance
    * and is thrown away from the blast (you too: that's a rocket jump, for less damage).
    */
-  private explode(owner: PlayerId, spec: WeaponSpec, pos: Vec3, direct: PlayerState | null, projectile: number) {
+  private explode(owner: PlayerId, spec: WeaponSpec, pos: Vec3, direct: Hittable | null, projectile: number) {
     const sp = spec.splash!;
     this.events.push({ type: "explosion", owner, weapon: spec.id, pos: clone(pos), radius: sp.radius });
-    for (const p of [...this.players.values()]) {
+    for (const p of [...this.players.values(), ...this.monsters] as Hittable[]) {
       if (!p.alive) continue;
       let factor = 1;
       if (p !== direct) {
@@ -730,7 +920,7 @@ export class World {
   }
 
   /** Nothing solid between a blast and some part of the player (middle, feet or head). */
-  private blastReaches(pos: Vec3, p: PlayerState): boolean {
+  private blastReaches(pos: Vec3, p: Hittable): boolean {
     for (const z of [BODY_MIDDLE, PLAYER_MINS.z + 2, EYE_HEIGHT]) {
       const to = vec3(p.origin.x, p.origin.y, p.origin.z + z);
       if (this.collision.traceBox(pos, to, POINT, POINT).fraction >= 1) return true;
@@ -739,7 +929,7 @@ export class World {
   }
 
   /** A hit from a bullet, pellets (`pellets` of them together) or a punch: damage, and a shove along the shot. */
-  private strike(victim: PlayerState, attacker: PlayerId, spec: WeaponSpec, amount: number, pos: Vec3, dir: Vec3, projectile: number, pellets = 1) {
+  private strike(victim: Hittable, attacker: PlayerId, spec: WeaponSpec, amount: number, pos: Vec3, dir: Vec3, projectile: number, pellets = 1) {
     if (this.tick < victim.protectedUntil) {
       this.events.push({ type: "shielded", projectile, attacker, victim: victim.id, pos: clone(pos) });
       return;
@@ -757,8 +947,17 @@ export class World {
 
   /** Damage (armor soaks up its share) and a push (`push` is added to their velocity). */
   /** `from`: unit direction back the way the hit came (towards the shooter, the blast, or the portal it came out of). */
-  private damage(victim: PlayerState, attacker: PlayerId, amount: number, pos: Vec3, push: Vec3, weapon: WeaponId, projectile: number, from: Vec3) {
+  private damage(victim: Hittable, attacker: PlayerId, amount: number, pos: Vec3, push: Vec3, weapon: WeaponId | null, projectile: number, from: Vec3) {
     if (!victim.alive) return;
+    // Horde: players are on one side, so their shots don't hurt each other (your own blast still does).
+    if (this.horde && !isMonster(victim) && !isMonsterId(attacker) && attacker !== victim.id) return;
+    if (isMonster(victim)) {
+      victim.health -= amount;
+      addScaled(victim.velocity, push, 0.5, victim.velocity); // heavy on their feet
+      this.events.push({ type: "hit", projectile, attacker, victim: victim.id, weapon, damage: amount, saved: 0, pos: clone(pos), from });
+      if (victim.health <= 0) this.killMonster(victim, attacker, weapon);
+      return;
+    }
     const saved = Math.min(victim.armor, Math.ceil(amount * VITALS.armorAbsorb));
     victim.armor -= saved;
     victim.health -= amount - saved;
@@ -771,7 +970,8 @@ export class World {
     victim.alive = false;
     victim.health = Math.min(victim.health, 0);
     victim.velocity.x = victim.velocity.y = victim.velocity.z = 0;
-    victim.respawnTick = this.tick + VITALS.respawnTicks;
+    // In Horde you're out until the next wave starts.
+    victim.respawnTick = this.horde ? Infinity : this.tick + VITALS.respawnTicks;
     victim.deaths++;
     const killer = attacker === null ? undefined : this.players.get(attacker);
     if (killer && killer !== victim) killer.frags++;

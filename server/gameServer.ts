@@ -4,6 +4,7 @@
  * TICK_RATE and sends every browser a snapshot. server/main.ts starts it from the
  * command line; tests start it in-process.
  */
+import { MonsterDirector } from "../src/bots/monsterDirector";
 import { personalityFor } from "../src/bots/personality";
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
@@ -81,8 +82,11 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
 
   const bots: Bot[] = [];
   const botCount = Math.max(0, Math.min(MAX_PLAYERS - 1, options.bots));
-  if (botCount > 0) {
-    const nav = buildNavGraph(level, world.collision);
+  const horde = options.rules?.mode === "horde";
+  const nav = botCount > 0 || horde ? buildNavGraph(level, world.collision) : null;
+  // Horde's monsters, moved here like the bots.
+  const director = horde && nav ? new MonsterDirector(nav) : null;
+  if (botCount > 0 && nav) {
     for (let i = 0; i < botCount; i++) {
       const id = nextId++;
       world.addPlayer(id);
@@ -187,9 +191,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     for (const b of bots) commands.set(b.id, b.command(world));
     // The end screen shows for a while, then the next match starts.
     if (world.match.phase === "over" && world.tick - world.match.endTick >= AUTO_REMATCH_TICKS) world.rematch();
-    world.step(commands);
+    world.step(commands, director?.commands(world));
     for (const e of world.events) {
-      if (e.type === "matchOver") log(`match over: ${names.get(e.winner) ?? `player ${e.winner}`} won`);
+      if (e.type === "matchOver") log(e.winner === null ? `match over: the horde won (wave ${world.match.horde?.wave ?? 0})` : `match over: ${names.get(e.winner) ?? `player ${e.winner}`} won`);
       if (e.type === "matchStart") log("new match");
     }
     if (clients.size > 0) broadcast({ t: "snap", snap: captureSnapshot(world), acks: [...clients].map((c) => [c.id, c.ack]) });

@@ -7,6 +7,24 @@ import { TICK_RATE, type PlayerState, type World } from "../sim/world";
 import { portalColorCss } from "../render/portalColors";
 import { AUTO_REMATCH_TICKS, describeRules, REMATCH_READY_TICKS, ticksLeft } from "../sim/match";
 import { canFire, holds, WEAPONS, weaponIndex } from "../sim/weapons";
+import { isMonsterId } from "../sim/monsters";
+
+/** Your best Horde wave on a map, kept in this browser. */
+const BEST_KEY = (map: string) => `skronk.hordeBest.${map}`;
+function bestWave(map: string): number {
+  try {
+    return Number(localStorage.getItem(BEST_KEY(map))) || 0;
+  } catch {
+    return 0;
+  }
+}
+function saveBestWave(map: string, wave: number) {
+  try {
+    localStorage.setItem(BEST_KEY(map), String(wave));
+  } catch {
+    // Storage blocked: no record kept.
+  }
+}
 
 /** What a pickup is called on screen. */
 const pickupName = (kind: string) => WEAPONS[weaponIndex(kind)]?.name ?? kind;
@@ -24,7 +42,7 @@ const FEED_LINES = 5;
 const ANNOUNCE_SECONDS = 2.2;
 
 /** Something worth a big message (and a sound): returned by update for the audio. */
-export type Announcement = "lead" | "tied" | "lostLead" | "fragsLeft" | "rivalFragsLeft" | "minute" | "tenSeconds";
+export type Announcement = "lead" | "tied" | "lostLead" | "fragsLeft" | "rivalFragsLeft" | "minute" | "tenSeconds" | "wave" | "waveCleared";
 
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -96,7 +114,7 @@ export class Hud {
       if (e.type === "hit" && e.victim === me.id) this.flashLevel = Math.min(0.55, this.flashLevel + 0.22);
       if (e.type === "kill" && e.attacker === me.id && e.victim !== me.id) {
         this.showMarker(KILL_MARKER_SECONDS, true);
-        this.say(`Fragged ${this.nameOf(e.victim)}`, 1.6);
+        if (!isMonsterId(e.victim)) this.say(`Fragged ${this.nameOf(e.victim)}`, 1.6);
       }
       if (e.type === "suddenDeath") this.say("Sudden death: the next frag wins", 3);
       if (e.type === "matchStart") this.say("Fight!", 1.2);
@@ -118,7 +136,9 @@ export class Hud {
       // The end screen says it all.
     } else if (!me.alive) {
       const seconds = Math.max(0, Math.ceil((me.respawnTick - world.tick) / TICK_RATE));
-      centre = `${this.killedBy || "You were fragged"}. Respawning in ${seconds}`;
+      centre = world.match.horde
+        ? `${this.killedBy || "You're down"}. Back in when the next wave starts`
+        : `${this.killedBy || "You were fragged"}. Respawning in ${seconds}`;
     } else if (this.centreTime > 0) {
       this.centreTime -= dt;
       centre = this.centreText;
@@ -139,7 +159,7 @@ export class Hud {
     setText(this.weaponName, spec.name.toUpperCase());
     setText(this.ammo, spec.ammoPerShot > 0 ? String(ammo) : "");
     this.updateWeaponBar(me);
-    setText(this.frags, `FRAGS ${me.frags}`);
+    setText(this.frags, `${world.match.horde ? "KILLS" : "FRAGS"} ${me.frags}`);
     this.health.classList.toggle("low", me.health <= 25);
     this.ammo.classList.toggle("low", spec.ammoPerShot > 0 && ammo <= spec.maxAmmo * 0.1);
 
@@ -166,13 +186,17 @@ export class Hud {
         this.called.clear();
         this.standing = "behind";
       }
+      if (e.type === "waveStart") say("wave", `Wave ${e.wave}`);
+      if (e.type === "waveCleared") say("waveCleared", `Wave ${e.wave} cleared`);
+      if (e.type === "matchOver" && m.horde && m.horde.wave > bestWave(world.level.name)) saveBestWave(world.level.name, m.horde.wave);
       if (e.type === "kill" && e.victim === me.id) {
         const how = e.weapon ? ` (${WEAPONS[weaponIndex(e.weapon)].name.toLowerCase()})` : "";
         this.killedBy =
           e.attacker === null ? "You fell" : e.attacker === me.id ? `You fragged yourself${how}` : `Fragged by ${this.nameOf(e.attacker)}${how}`;
       }
     }
-    if (m.phase !== "playing" || world.players.size < 2) return said;
+    // Who's ahead only matters when you're playing against each other.
+    if (m.phase !== "playing" || world.players.size < 2 || m.horde) return said;
 
     if (events.some((e) => e.type === "kill")) {
       let best = -Infinity;
@@ -249,12 +273,14 @@ export class Hud {
   private killFeed(me: PlayerState, events: readonly SimEvent[], dt: number) {
     const who = (id: number) => (id === me.id ? "You" : capitalise(this.nameOf(id)));
     for (const e of events) {
-      if (e.type !== "kill") continue;
+      // Monsters falling would flood it: only frags of players go in.
+      if (e.type !== "kill" || isMonsterId(e.victim)) continue;
       const line = document.createElement("div");
       line.className = "line";
       if (e.victim === me.id || e.attacker === me.id) line.classList.add("me");
       const weapon = e.weapon ? WEAPONS[weaponIndex(e.weapon)].name : "";
       if (e.attacker === null) line.textContent = `${who(e.victim)} fell`;
+      else if (isMonsterId(e.attacker)) line.textContent = `${who(e.attacker)} got ${who(e.victim)}`;
       else if (e.attacker === e.victim) {
         const you = e.victim === me.id;
         line.textContent =
@@ -301,8 +327,23 @@ export class Hud {
     const limited = fragLimit > 0 || timeLimitTicks > 0;
 
     // The clock and protection notice belong to play; the menu covers the rest.
-    this.clock.classList.toggle("hidden", !limited || over || !this.visible);
-    if (limited && !over) {
+    this.clock.classList.toggle("hidden", !(limited || m.horde) || over || !this.visible);
+    if (m.horde && !over) {
+      // Horde: the wave, what's left of it, and your kills.
+      const h = m.horde;
+      const kills = `Kills: ${me.frags}`;
+      let text: string;
+      if (h.nextWaveTick > 0) {
+        const s = Math.max(0, Math.ceil((h.nextWaveTick - world.tick) / TICK_RATE));
+        text = h.wave === 0 ? `Get ready  ·  wave 1 in ${s}` : `Wave ${h.wave} cleared  ·  next in ${s}  ·  ${kills}`;
+      } else {
+        const left = h.toSpawn + world.monsters.filter((x) => x.alive).length;
+        text = `Wave ${h.wave}  ·  ${left} left  ·  ${kills}`;
+      }
+      const best = bestWave(world.level.name);
+      setText(this.clock, best > 0 ? `${text}  ·  best: wave ${best}` : text);
+      this.clock.classList.toggle("urgent", h.nextWaveTick === 0 && !me.alive);
+    } else if (limited && !over) {
       const parts: string[] = [];
       const left = ticksLeft(m, world.tick);
       if (m.suddenDeath) parts.push("SUDDEN DEATH");
@@ -329,9 +370,15 @@ export class Hud {
     this.endBox.classList.toggle("hidden", !over);
     this.nextText.classList.toggle("hidden", !over);
     if (!over) return;
-    const winner = m.winner === me.id ? "You win!" : m.winner === null ? "Match over" : `${capitalise(this.nameOf(m.winner))} wins`;
-    setText(this.winnerText, winner);
-    setText(this.rulesText, capitalise(describeRules(m.rules)));
+    if (m.horde) {
+      setText(this.winnerText, `Overrun on wave ${m.horde.wave}`);
+      const best = bestWave(world.level.name);
+      setText(this.rulesText, `Horde · ${me.frags} kills · best: wave ${Math.max(best, m.horde.wave)}`);
+    } else {
+      const winner = m.winner === me.id ? "You win!" : m.winner === null ? "Match over" : `${capitalise(this.nameOf(m.winner))} wins`;
+      setText(this.winnerText, winner);
+      setText(this.rulesText, capitalise(describeRules(m.rules)));
+    }
     const since = world.tick - m.endTick;
     const next = this.networked
       ? `Next match in ${Math.max(0, Math.ceil((AUTO_REMATCH_TICKS - since) / TICK_RATE))}`
@@ -345,6 +392,8 @@ export class Hud {
   private updateScores(world: World, me: PlayerState, show: boolean) {
     this.scoreboard.classList.toggle("hidden", !show);
     if (!show) return;
+    const head = this.scoreboard.querySelector("thead th:nth-child(2)");
+    if (head) setText(head as HTMLElement, world.match.horde ? "Kills" : "Frags");
     const rows = [...world.players.values()].sort((a, b) => b.frags - a.frags || a.deaths - b.deaths || a.id - b.id);
     const text = rows.map((p) => `${p.id}:${p.frags}:${p.deaths}:${this.nameOf(p.id)}`).join("|");
     if (text === this.scoreText) return;

@@ -30,7 +30,9 @@ const difficulty = DIFFICULTIES.find((d) => d.id === arg("difficulty", "normal")
 // Match: --fraglimit N (0 for none) and --timelimit minutes (0 for none).
 const fragLimit = Math.max(0, Math.floor(Number(arg("fraglimit", "20")) || 0));
 const minutes = Math.max(0, Number(arg("timelimit", "10")) || 0);
-const rules = { fragLimit, timeLimitTicks: secondsToTicks(minutes * 60) };
+// --mode horde: waves of monsters, everyone on one side (the frag and time limits don't apply).
+const mode = arg("mode", "deathmatch") === "horde" ? "horde" : "deathmatch";
+const rules = mode === "horde" ? { fragLimit: 0, timeLimitTicks: 0, mode } as const : { fragLimit, timeLimitTicks: secondsToTicks(minutes * 60) };
 const port = Number(arg("port", process.env.PORT ?? String(GAME_PORT)));
 const serve = process.argv.includes("--serve");
 const staticDir = serve ? resolve(import.meta.dirname, "../dist") : undefined;

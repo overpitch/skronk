@@ -53,6 +53,7 @@ export function buildLevel(name: string, entities: MapEntity[]): LevelData {
   const surfaces: Surface[] = [];
   const brushes: CollisionBrush[] = [];
   const spawns: SpawnPoint[] = [];
+  const monsterSpawns: Vec3[] = [];
   const pickups: PickupMarker[] = [];
   const lights: LightMarker[] = [];
   const levelMins = vec3(Infinity, Infinity, Infinity);
@@ -121,6 +122,8 @@ export function buildLevel(name: string, entities: MapEntity[]): LevelData {
         yaw: ((Number.isFinite(angle) ? angle : 0) * Math.PI) / 180,
         team: Number(ent.properties.team ?? 0) || 0,
       });
+    } else if (classname === "monster_spawn") {
+      monsterSpawns.push(origin);
     } else if (classname.startsWith("pickup_")) {
       const { classname: _c, origin: _o, ...properties } = ent.properties;
       pickups.push({ kind: classname.slice("pickup_".length), origin, properties });
@@ -140,7 +143,7 @@ export function buildLevel(name: string, entities: MapEntity[]): LevelData {
   if (spawns.length === 0) warnings.push("no player_spawn entities; players will spawn at the map center");
   for (const w of warnings) console.warn(`[level ${name}] ${w}`);
 
-  return { name, surfaces, brushes, spawns, pickups, lights, mins: levelMins, maxs: levelMaxs, warnings };
+  return { name, surfaces, brushes, spawns, monsterSpawns, pickups, lights, mins: levelMins, maxs: levelMaxs, warnings };
 }
 
 export class TrenchBroomLoader implements LevelLoader {

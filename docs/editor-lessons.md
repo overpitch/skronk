@@ -93,7 +93,8 @@ What a player can do (1 unit is about an inch):
    - The strong ones (rockets, railgun) where getting them costs something: in the open, up high, or only reachable by portal. The railgun suits a spot that looks down a long line.
    - The shotgun near tight corners, where it shines.
    - The grenade launcher near low walls and corners: grenades bounce and can be lobbed over or round them.
-4. **Lights:** two to four. Light graphics mode (the Xbox) uses only the first four lights in a map and Full mode the first eight, so put the important ones first; `_color` tints them (`1 0.85 0.6` is warm, `0.6 0.8 1` cool).
+4. **Monster spawns (Horde mode):** `monster_spawn`s, placed like player spawns (origin 25 above the floor). Monsters come in at whichever ones are out of the players' sight and furthest from them, so several round the edges of the map (doorways, corners, the far ends of corridors) feel like a horde arriving. A map without any uses the player spawns instead.
+5. **Lights:** two to four. Light graphics mode (the Xbox) uses only the first four lights in a map and Full mode the first eight, so put the important ones first; `_color` tints them (`1 0.85 0.6` is warm, `0.6 0.8 1` cool).
 
 **Check it:** in the game's menu set **Bots** to 3 and play. Bots go for pickups when they need them, so you'll see quickly whether yours are placed well. Open the **Arena** map to see a full layout.
 

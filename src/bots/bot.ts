@@ -32,7 +32,7 @@ import { emptyCommand, type PlayerCommand } from "../sim/command";
 import { EYE_HEIGHT, MOVE, PLAYER_MAXS, PLAYER_MINS } from "../sim/movement";
 import { TICK_DT, TICK_RATE } from "../sim/tick";
 import { WEAPONS } from "../sim/weapons";
-import type { PlayerId, PlayerState, World } from "../sim/world";
+import type { Hittable, PlayerId, PlayerState, World } from "../sim/world";
 import type { NavGraph } from "./nav";
 import { Navigator, type Steer } from "./navigator";
 import { hash, signedHash } from "./random";
@@ -254,7 +254,7 @@ export class Bot {
     const hurting = me.health < this.personality.retreatHealth;
     const urgent = !!pickup && (runningDry(me) || me.health < LOW_HEALTH || (pickup.kind === "health" && hurting));
     const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
-    const target = this.target === null ? null : (world.players.get(this.target) ?? null);
+    const target = this.target === null ? null : (world.body(this.target) ?? null);
     let lookYaw = this.yaw;
     let lookPitch = 0;
     let steer: Steer;
@@ -506,7 +506,7 @@ export class Bot {
       this.shotBy = { id: e.attacker, at: world.tick + this.skill.noticeHitTicks };
     }
     if (this.shotBy && world.tick >= this.shotBy.at) {
-      const attacker = world.players.get(this.shotBy.id);
+      const attacker = world.body(this.shotBy.id);
       this.shotBy = null;
       if (attacker && attacker.alive && (this.target === null || !this.targetVisible)) {
         this.target = attacker.id;
@@ -515,12 +515,13 @@ export class Bot {
       }
     }
 
-    type Sighting = { p: PlayerState; height: number; via: { from: Portal; to: Portal } | null; d: number };
+    type Sighting = { p: Hittable; height: number; via: { from: Portal; to: Portal } | null; d: number };
     let best: Sighting | null = null;
     let current: Sighting | null = null;
-    for (const p of world.players.values()) {
+    // Players it fights (not allies), and in Horde the monsters.
+    for (const p of [...world.players.values(), ...world.monsters] as Hittable[]) {
       // Someone under spawn protection isn't worth a shot yet.
-      if (p === me || !p.alive || (me.team !== 0 && p.team === me.team) || world.tick < p.protectedUntil) continue;
+      if (p === me || !p.alive || !world.areEnemies(me, p) || world.tick < p.protectedUntil) continue;
       const direct = this.canSee(world, me, p);
       const seen: Sighting | null =
         direct !== null
@@ -542,8 +543,8 @@ export class Bot {
       this.seenTick = world.tick;
     } else {
       this.targetVisible = false;
-      const t = this.target === null ? null : world.players.get(this.target);
-      if (t && !t.alive) this.forget();
+      const t = this.target === null ? null : world.body(this.target);
+      if (!t || !t.alive) this.forget();
     }
   }
 
@@ -551,7 +552,7 @@ export class Bot {
    * In its field of view with nothing solid in between: the height above p's origin
    * it can see (chest first, else head), or null.
    */
-  private canSee(world: World, me: PlayerState, p: PlayerState): number | null {
+  private canSee(world: World, me: PlayerState, p: Hittable): number | null {
     const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
     const dx = p.origin.x - eye.x;
     const dy = p.origin.y - eye.y;
@@ -574,7 +575,7 @@ export class Bot {
    * is clear. The height above their origin it can see, the pair, and the distance
    * the way through; or null.
    */
-  private canSeeThrough(world: World, me: PlayerState, p: PlayerState): { p: PlayerState; height: number; via: { from: Portal; to: Portal }; d: number } | null {
+  private canSeeThrough(world: World, me: PlayerState, p: Hittable): { p: Hittable; height: number; via: { from: Portal; to: Portal }; d: number } | null {
     if (!this.skill.portalSight) return null;
     const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
     const zero = vec3();
@@ -612,7 +613,7 @@ export class Bot {
    * Hurting in a fight (Normal and up): the far side of an open portal pair close by
    * that lands well away from the enemy, to head for; or null.
    */
-  private escapeThroughPortal(world: World, me: PlayerState, enemy: PlayerState): Vec3 | null {
+  private escapeThroughPortal(world: World, me: PlayerState, enemy: Hittable): Vec3 | null {
     if (!this.skill.portalEscape || world.tick - this.escapedTick < ESCAPE_COOLDOWN_TICKS) return null;
     let best: Vec3 | null = null;
     let bestDist = ESCAPE_REACH;

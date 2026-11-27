@@ -57,6 +57,7 @@ Right-click in the 2D or 3D view → Create Point Entity, or drag from the Entit
 | Entity | Keys |
 | --- | --- |
 | `player_spawn` | `angle` (degrees, 0 = +X, 90 = +Y), `team` (0 any, 1, 2) |
+| `monster_spawn` | none: where Horde mode's monsters come in (a map without any uses the player spawns) |
 | `pickup_health` | `amount` (default 25) |
 | `pickup_armor` | `amount` (default 50) |
 | `pickup_ammo` | none: an ammo box tops up every gun the player holds |

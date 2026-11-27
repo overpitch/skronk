@@ -61,6 +61,8 @@ export interface LevelData {
   surfaces: Surface[];
   brushes: CollisionBrush[];
   spawns: SpawnPoint[];
+  /** Where Horde-mode monsters come from (monster_spawn entities); empty: they use the player spawns. */
+  monsterSpawns: Vec3[];
   pickups: PickupMarker[];
   lights: LightMarker[];
   mins: Vec3;
