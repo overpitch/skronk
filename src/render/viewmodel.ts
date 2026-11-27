@@ -50,7 +50,6 @@ export class ViewModel {
     const dark = new THREE.MeshLambertMaterial({ color: 0x23262c });
     const wood = new THREE.MeshLambertMaterial({ color: 0x6b4a2f });
     const red = new THREE.MeshLambertMaterial({ color: 0x8c2a22 });
-    const glove = new THREE.MeshLambertMaterial({ color: 0x5a4636 });
     const cyan = new THREE.MeshBasicMaterial({ color: 0x4fd6ff });
     const orange = new THREE.MeshBasicMaterial({ color: 0xff7a3a });
     const rail = new THREE.MeshBasicMaterial({ color: 0x7ff0ff });
@@ -82,16 +81,21 @@ export class ViewModel {
       return m;
     };
 
-    model("fists", { flashAt: null, flashColor: 0, kickBack: 0, kickPitch: 0 }, (part) => {
-      // Right fist in front, left one held back at the far side.
-      const right = part(box(2.6, 2.6, 3), glove, 0, 0, -2, false);
-      part(box(2.8, 1.2, 1.6), dark, 0, 0, 0.8); // cuff
-      const left = part(box(2.6, 2.6, 3), glove, -9, 0.6, 1, false);
-      part(box(2.8, 1.2, 1.6), dark, -9, 0.6, 3.8);
-      right.userData.jab = true;
+    model("fists", { flashAt: null, flashColor: 0, kickBack: 0, kickPitch: 0 }, () => {});
+    {
+      // Gloved fists on forearms that come up from the bottom of the view; the right one punches.
+      const fists = this.models.get("fists")!;
+      const right = fistArm(1, detailed);
+      right.position.set(0, 0, -2);
+      const left = fistArm(-1, detailed);
+      left.position.set(-9, 0.6, 1);
       left.rotation.z = 0.2;
-    });
-    this.models.get("fists")!.fist = this.models.get("fists")!.group.children.find((c) => c.userData.jab);
+      fists.group.add(right, left);
+      // Smaller and lower than the guns, so they frame the view rather than fill it.
+      fists.group.scale.setScalar(0.8);
+      fists.group.position.set(0.5, -1.2, 0);
+      fists.fist = right;
+    }
 
     model("machinegun", { flashAt: new THREE.Vector3(0, 0.5, -11.2), flashColor: 0xffffff, kickBack: 1.8, kickPitch: 0.14 }, (part) => {
       part(box(2.4, 2.6, 9), metal, 0, 0, 0, false);
@@ -228,3 +232,47 @@ export class ViewModel {
 }
 
 type Part = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, extra?: boolean) => THREE.Object3D;
+
+const GLOVE = new THREE.MeshLambertMaterial({ color: 0x5a4636 });
+const KNUCKLE = new THREE.MeshLambertMaterial({ color: 0x3e3026 });
+const SLEEVE = new THREE.MeshLambertMaterial({ color: 0x30343c });
+const CUFF = new THREE.MeshLambertMaterial({ color: 0x23262c });
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+/**
+ * One gloved fist on its forearm (camera space: -Z forward, +Y up), for `side` 1 (right)
+ * or -1 (left), the fist at the group's origin. Detailed: knuckle ridges, stitched cuff.
+ */
+function fistArm(side: 1 | -1, detailed: boolean): THREE.Group {
+  const g = new THREE.Group();
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    g.add(m);
+    return m;
+  };
+  // A rod from a to b (a cylinder turned to lie along it).
+  const rod = (a: THREE.Vector3, b: THREE.Vector3, r0: number, r1: number, mat: THREE.Material) => {
+    const dir = b.clone().sub(a);
+    const m = add(new THREE.CylinderGeometry(r1, r0, dir.length(), 10), mat, (a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    m.quaternion.setFromUnitVectors(Y_AXIS, dir.normalize());
+    return m;
+  };
+  // The back of the hand, and the fingers curled under at the front.
+  add(new THREE.BoxGeometry(2.7, 2.2, 2.8), GLOVE, 0, 0.2, 0.1);
+  add(new THREE.BoxGeometry(2.6, 1.6, 1.1), GLOVE, 0, -0.55, -1.35);
+  // Thumb, folded across the inside of the fingers.
+  const thumb = add(new THREE.BoxGeometry(0.9, 0.85, 1.9), GLOVE, -side * 1.15, -0.75, -0.55);
+  thumb.rotation.y = side * 0.35;
+  if (detailed) {
+    // Knuckle ridges along the front.
+    for (let i = 0; i < 4; i++) add(new THREE.BoxGeometry(0.55, 0.6, 0.6), KNUCKLE, (i - 1.5) * 0.65, 0.9, -1.2);
+  }
+  // Wrist cuff, then the forearm running back and down out of view.
+  const wrist = new THREE.Vector3(0, -0.2, 1.6);
+  const elbow = new THREE.Vector3(side * 2.4, -6, 11);
+  rod(wrist, wrist.clone().lerp(elbow, 0.12), 1.55, 1.55, CUFF);
+  rod(wrist.clone().lerp(elbow, 0.1), elbow, 1.25, 1.55, SLEEVE);
+  if (detailed) rod(wrist.clone().lerp(elbow, 0.12), wrist.clone().lerp(elbow, 0.15), 1.6, 1.6, KNUCKLE); // a seam on the cuff
+  return g;
+}
