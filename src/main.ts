@@ -1,6 +1,7 @@
 import maps from "virtual:maps";
 import { buildNavGraph, type NavGraph } from "./bots/nav";
 import { Bot } from "./bots/bot";
+import { personalityFor } from "./bots/personality";
 import { DUMMY_DEFAULT_SPEED, TargetDummy } from "./bots/targetDummy";
 import { Sfx } from "./client/audio";
 import { Hud } from "./client/hud";
@@ -131,8 +132,8 @@ async function start() {
   /** n bots; with none, a practice dummy (unless ?dummies says otherwise). */
   const setBots = (n: number) => {
     if (n > 0 && !nav) nav = buildNavGraph(level, world.collision);
-    resize(fighters, n, (id) => new Bot(id, nav!, botSkillLevel()));
-    fighters.forEach((b, i) => names.set(b.id, `Bot ${i + 1}`));
+    resize(fighters, n, (id) => new Bot(id, nav!, botSkillLevel(), personalityFor(fighters.length)));
+    fighters.forEach((b) => names.set(b.id, b.personality.name));
     const dummyCount = dummiesParam ?? (n > 0 ? 0 : 1);
     resize(dummies, dummyCount, (id) => new TargetDummy(id, dummiesShoot, dummySpeed));
     dummies.forEach((d, i) => names.set(d.id, dummyCount > 1 ? `Dummy ${i + 1}` : "the dummy"));

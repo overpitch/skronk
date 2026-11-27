@@ -81,7 +81,7 @@ export interface PickupChoice {
  * The pickup most worth going for, or null if none is worth the trip. One that
  * has been taken counts if it will be back by the time we arrive.
  */
-export function choosePickup(world: World, me: PlayerState, nav: NavGraph, only?: string): PickupChoice | null {
+export function choosePickup(world: World, me: PlayerState, nav: NavGraph, only?: string, favour: (kind: string) => number = () => 1): PickupChoice | null {
   const start = nav.nearest(me.origin);
   if (start < 0) return null;
   // Routes may go through portals that are open now.
@@ -89,7 +89,8 @@ export function choosePickup(world: World, me: PlayerState, nav: NavGraph, only?
   let best: PickupChoice | null = null;
   world.pickups.forEach((pk, index) => {
     if (!pk.known || (only && pk.kind !== only)) return;
-    const worth = pickupWorth(me, pk);
+    // A favourite weapon (personality) is worth more to it.
+    const worth = pickupWorth(me, pk) * favour(pk.kind);
     if (worth <= 0) return;
     const goal = nav.nearest(pk.origin);
     const path = nav.findPath(start, goal, extra);

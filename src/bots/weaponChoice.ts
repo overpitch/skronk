@@ -32,12 +32,19 @@ export function suitability(w: number, distance: number): number {
 }
 
 /** The weapon to hold for a fight at `distance`: the best that has ammo, keeping the current one unless another is clearly better. */
-export function chooseWeapon(me: Pick<Armed, "weapon" | "weapons" | "ammo">, distance: number, margin = SWITCH_MARGIN): number {
+export function chooseWeapon(
+  me: Pick<Armed, "weapon" | "weapons" | "ammo">,
+  distance: number,
+  margin = SWITCH_MARGIN,
+  /** A personality's favourites, added to how well each suits the distance. */
+  bias: Partial<Record<WeaponId, number>> = {},
+): number {
+  const scoreOf = (w: number) => suitability(w, distance) + (bias[WEAPONS[w].id] ?? 0);
   let best = canFire(me, me.weapon) ? me.weapon : FISTS;
-  let bestScore = suitability(best, distance) + (best === me.weapon ? margin : 0);
+  let bestScore = scoreOf(best) + (best === me.weapon ? margin : 0);
   for (let w = 0; w < WEAPONS.length; w++) {
     if (w === best || !canFire(me, w)) continue;
-    const score = suitability(w, distance);
+    const score = scoreOf(w);
     if (score > bestScore) {
       best = w;
       bestScore = score;

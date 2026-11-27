@@ -4,6 +4,7 @@
  * TICK_RATE and sends every browser a snapshot. server/main.ts starts it from the
  * command line; tests start it in-process.
  */
+import { personalityFor } from "../src/bots/personality";
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -85,8 +86,9 @@ export function startServer(options: ServerOptions): Promise<RunningServer> {
     for (let i = 0; i < botCount; i++) {
       const id = nextId++;
       world.addPlayer(id);
-      bots.push(new Bot(id, nav, options.skill));
-      names.set(id, `Bot ${i + 1}`);
+      const bot = new Bot(id, nav, options.skill, personalityFor(i));
+      bots.push(bot);
+      names.set(id, bot.personality.name);
     }
   }
 

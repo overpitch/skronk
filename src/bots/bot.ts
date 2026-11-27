@@ -22,8 +22,9 @@
  *   through a pair that leads away from the enemy. (Normal and Hard: lower levels
  *   don't think of portals in a fight, though they still follow you through.)
  *
- * One skill number (0..1) sets how quick and accurate it is. Like every
- * participant it only produces PlayerCommands; it reads the world, never writes it.
+ * One skill number (0..1) sets how quick and accurate it is; a personality
+ * (personality.ts) sets how it plays. Like every participant it only produces
+ * PlayerCommands; it reads the world, never writes it.
  */
 import { addScaled, sub, vec3, type Vec3 } from "../math/vec3";
 import { segmentIntoPortal, throughPortalPoint, type Portal } from "../sim/portals";
@@ -39,7 +40,8 @@ import { choosePickup, LOW_HEALTH, pickupWorth, pickupAppeal, runningDry } from 
 import { portalLinks } from "./portalLinks";
 import { PortalJob } from "./portalJob";
 import { planPortals, preparePortalPlanner, type PortalSpot } from "./portalPlanner";
-import { chooseWeapon, FIGHT_RANGE, hasGunAmmo } from "./weaponChoice";
+import { chooseWeapon, FIGHT_RANGE, hasGunAmmo, isWeaponKind } from "./weaponChoice";
+import { PERSONALITIES, type Personality } from "./personality";
 
 export interface BotSkill {
   /** Ticks from first seeing an enemy to the first shot. */
@@ -125,6 +127,8 @@ const LONG_TRIP_TICKS = 5 * TICK_RATE;
 const EXPLORE_CHANCE = 0.45;
 /** Spots that let it down are avoided this long. */
 const FAILED_SPOT_TICKS = 30 * TICK_RATE;
+/** A camper only leaves its spot for a pickup at least this appealing (something it really needs, or close by). */
+const CAMPER_MIN_APPEAL = 0.4;
 /** Farthest it notices someone through a portal. */
 const PORTAL_SIGHT_RANGE = 2000;
 /** An escape portal has to be this close, and lead at least this far from the enemy. */
@@ -191,10 +195,14 @@ export class Bot {
   /** Portal spots whose shots didn't land, and until when it avoids them. */
   private failedSpots = new Map<PortalSpot, number>();
 
+  /** Where it holds when there's nothing to do (a camping personality), or null to roam. */
+  private post: Vec3 | null = null;
+
   constructor(
     readonly id: PlayerId,
     nav: NavGraph,
     skill = DEFAULT_BOT_SKILL,
+    readonly personality: Personality = PERSONALITIES[0],
   ) {
     this.nav = new Navigator(id, nav);
     this.graph = nav;
@@ -243,7 +251,8 @@ export class Bot {
     this.chooseFetch(world, me);
     this.thinkAboutPortals(world, me);
     const pickup = this.fetch >= 0 ? world.pickups[this.fetch] : null;
-    const urgent = !!pickup && (runningDry(me) || me.health < LOW_HEALTH);
+    const hurting = me.health < this.personality.retreatHealth;
+    const urgent = !!pickup && (runningDry(me) || me.health < LOW_HEALTH || (pickup.kind === "health" && hurting));
     const eye = vec3(me.origin.x, me.origin.y, me.origin.z + EYE_HEIGHT);
     const target = this.target === null ? null : (world.players.get(this.target) ?? null);
     let lookYaw = this.yaw;
@@ -288,8 +297,8 @@ export class Bot {
         lookYaw = this.yaw;
         lookPitch = this.pitch;
       }
-      const away = me.health < LOW_HEALTH ? this.escapeThroughPortal(world, me, target) : null;
-      if (pickup && pickup.kind === "health" && me.health < LOW_HEALTH) {
+      const away = hurting ? this.escapeThroughPortal(world, me, target) : null;
+      if (pickup && pickup.kind === "health" && hurting) {
         // Hurting: back off towards health, still shooting.
         this.nav.goTo(pickup.origin);
         steer = this.nav.steer(world, me);
@@ -298,7 +307,9 @@ export class Bot {
         this.nav.goTo(away);
         steer = this.nav.steer(world, me);
       } else {
-        steer = this.fightMove(world, me, seenAt!, FIGHT_RANGE[spec.id]);
+        const keep = FIGHT_RANGE[spec.id];
+        const k = this.personality.rangeScale;
+        steer = this.fightMove(world, me, seenAt!, { near: keep.near * k, far: keep.far * k });
         this.dodging = true;
       }
       this.turn(lookYaw, lookPitch);
@@ -326,7 +337,7 @@ export class Bot {
         this.job = null;
       }
     } else {
-      const chasing = !!target && !!this.lastSeen && world.tick - this.seenTick < MEMORY_TICKS;
+      const chasing = !!target && !!this.lastSeen && world.tick - this.seenTick < MEMORY_TICKS * this.personality.chaseScale;
       let lookAhead = true;
       if (pickup && (urgent || !chasing)) {
         // Fetch: a pickup it badly needs beats a chase; otherwise only when there's no one to chase.
@@ -341,7 +352,13 @@ export class Bot {
         }
       } else {
         this.forget();
-        this.nav.goTo(null);
+        // Nothing to do: a camper holds its spot, looking about; everyone else roams.
+        const post = this.postFor(world);
+        this.nav.goTo(post);
+        if (post && (this.nav.arrived || this.nav.unreachable)) {
+          lookAhead = false;
+          lookYaw = this.yaw + Math.sin(world.tick / 70 + this.id) * 0.02;
+        }
       }
       steer = this.nav.steer(world, me);
       // Roaming, fetching (or chasing round corners): look where you're going.
@@ -363,11 +380,28 @@ export class Bot {
     return cmd;
   }
 
+  /** A camper's spot: by the pickup of its favourite weapon, else the armor, else health (null to roam). */
+  private postFor(world: World): Vec3 | null {
+    if (!this.personality.camps) return null;
+    if (this.post) return this.post;
+    const bias = this.personality.weaponBias;
+    // A real favourite (not just a slight liking) beats the armor.
+    const favourite = (kind: string) => (isWeaponKind(kind) ? (bias[kind as keyof typeof bias] ?? 0) : 0);
+    const rank = (kind: string) => (favourite(kind) >= 0.3 ? 10 + favourite(kind) : kind === "armor" ? 5 : kind === "health" ? 1 : -1);
+    let best: { origin: Vec3; score: number } | null = null;
+    for (const pk of world.pickups) {
+      const score = rank(pk.kind);
+      if (score > 0 && (!best || score > best.score)) best = { origin: pk.origin, score };
+    }
+    this.post = best ? { ...best.origin } : null;
+    return this.post;
+  }
+
   /** Picks the weapon for a fight at this distance (every so often, so it doesn't dither). */
   private readyWeapon(world: World, me: PlayerState, distance: number) {
     if (world.tick < this.weaponTick && this.wantWeapon >= 0) return;
     this.weaponTick = world.tick + this.skill.weaponRethinkTicks;
-    this.wantWeapon = chooseWeapon(me, distance, this.skill.switchMargin);
+    this.wantWeapon = chooseWeapon(me, distance, this.skill.switchMargin, this.personality.weaponBias);
   }
 
   /**
@@ -388,7 +422,7 @@ export class Bot {
     const current = this.fetch >= 0 ? world.pickups[this.fetch] : null;
     if (current) {
       const node = this.graph.nearest(current.origin, 3 * 32);
-      if (node >= 0 && onFoot[node] > LONG_TRIP_TICKS) {
+      if (node >= 0 && onFoot[node] > LONG_TRIP_TICKS / this.personality.portalScale) {
         const plan = planPortals(world, this.graph, me, current.origin, avoid);
         if (plan) return void (this.job = new PortalJob(plan, current.origin, world.tick));
       }
@@ -415,9 +449,9 @@ export class Bot {
       }
     }
 
-    // Nothing it badly needs: now and then, go and see somewhere only portals reach.
+    // Nothing it badly needs: now and then (not a camper), go and see somewhere only portals reach.
     const needy = !!current && (runningDry(me) || me.health < LOW_HEALTH);
-    if (needy || hash(this.id * 4099 + world.tick) >= EXPLORE_CHANCE) return;
+    if (needy || this.personality.camps || hash(this.id * 4099 + world.tick) >= Math.min(0.95, EXPLORE_CHANCE * this.personality.portalScale)) return;
     const away: number[] = [];
     onFoot.forEach((c, id) => !Number.isFinite(c) && away.push(id));
     if (away.length === 0) return;
@@ -434,7 +468,10 @@ export class Bot {
     if (useless) this.fetch = -1;
     if (world.tick < this.rethinkTick && !useless) return;
     this.rethinkTick = world.tick + RETHINK_TICKS + (this.id % 7); // bots spread their thinking out
-    this.fetch = choosePickup(world, me, this.graph)?.index ?? -1;
+    const choice = choosePickup(world, me, this.graph, undefined, (kind) => (isWeaponKind(kind) ? 1 + 2 * (this.personality.weaponBias[kind as keyof Personality["weaponBias"]] ?? 0) : 1));
+    // A camper leaves its spot only for something it really wants.
+    const worthLeaving = !this.personality.camps || (choice !== null && choice.appeal >= CAMPER_MIN_APPEAL);
+    this.fetch = choice && worthLeaving ? choice.index : -1;
   }
 
   private forget() {
